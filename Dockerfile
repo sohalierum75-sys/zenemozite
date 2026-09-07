@@ -15,8 +15,8 @@ COPY postcss.config.js ./
 COPY tailwind.config.js ./
 COPY index.html ./
 
-# Install frontend dependencies
-RUN npm ci --omit=dev --ignore-scripts
+# Install ALL dependencies (including devDependencies needed for build)
+RUN npm ci --ignore-scripts
 
 # Copy frontend source
 COPY src/ ./src/
@@ -32,8 +32,8 @@ WORKDIR /app/backend
 # Copy backend package files
 COPY backend/package*.json ./
 
-# Install backend dependencies
-RUN npm ci --omit=dev --ignore-scripts
+# Install ALL backend dependencies (including prisma needed for generate)
+RUN npm ci --ignore-scripts
 
 # Copy Prisma schema
 COPY backend/prisma ./prisma/
