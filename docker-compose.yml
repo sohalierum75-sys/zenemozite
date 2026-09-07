@@ -7,6 +7,7 @@ services:
     restart: unless-stopped
     
     ports:
+      - "80:5000"
       - "5000:5000"
     
     environment:
@@ -32,8 +33,8 @@ services:
       start_period: 40s
     
     labels:
-      - "com.zenemozite.description=Zenemozite Backend Service"
-      - "com.zenemozite.version=12.0"
+      - "com.zenemozite.description=Zenemozite Full-Stack Service (Frontend + Backend)"
+      - "com.zenemozite.version=13.0"
 
 volumes:
   zenemozite-data:

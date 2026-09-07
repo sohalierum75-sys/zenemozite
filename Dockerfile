@@ -22,6 +22,11 @@ RUN npm ci --ignore-scripts
 # Copy frontend source
 COPY src/ ./src/
 
+# Set API base URL to relative path so the built app works from any VPS IP/domain.
+# When served on port 5000 alongside the backend, /api resolves to same-origin.
+ARG VITE_API_BASE_URL=/api
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+
 # Build frontend for production
 RUN npm run build
 

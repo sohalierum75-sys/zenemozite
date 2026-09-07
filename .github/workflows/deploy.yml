@@ -84,6 +84,7 @@ jobs:
                 restart: unless-stopped
                 
                 ports:
+                  - "80:5000"
                   - "5000:5000"
                 
                 environment:
@@ -105,6 +106,10 @@ jobs:
                   timeout: 10s
                   retries: 3
                   start_period: 40s
+                
+                labels:
+                  - "com.zenemozite.description=Zenemozite Full-Stack Service (Frontend + Backend)"
+                  - "com.zenemozite.version=13.0"
 
             volumes:
               zenemozite-data:
@@ -170,7 +175,8 @@ jobs:
         run: |
           echo "✅ Successfully deployed to VPS"
           echo "📦 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
-          echo "🌐 Application should be accessible at http://${{ secrets.SERVER_HOST }}:5000"
+          echo "🌐 Frontend: http://${{ secrets.SERVER_HOST }} (port 80)"
+          echo "🔌 Backend API: http://${{ secrets.SERVER_HOST }}:5000/api"
       
       - name: Deployment failed
         if: failure()
