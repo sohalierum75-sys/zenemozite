@@ -1,0 +1,47 @@
+// Prisma Schema for MovieStream
+// This schema defines the database structure for caching movie/TV metadata and torrents
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./moviestream.db"
+}
+
+// MediaCache model - Stores cached movie and TV show data
+model MediaCache {
+  id             String   @id @default(uuid())
+  tmdbId         String   @unique
+  mediaType      String   // "movie" or "tv"
+  imdbId         String?
+  title          String
+  year           String?
+  rating         Float?
+  runtime        Int?
+  poster         String?
+  backdrop       String?
+  plot           String?
+  genres         String?  // JSON string array
+  ytTrailerCode  String?
+  torrents       String?  // JSON string array of torrent objects
+  numberOfSeasons Int?    // For TV shows only
+  lastUpdated    DateTime @default(now())
+  createdAt      DateTime @default(now())
+  
+  @@index([mediaType])
+  @@index([lastUpdated])
+}
+
+// Optional: ListCache model - Cache entire lists for better performance
+model ListCache {
+  id             String   @id @default(uuid())
+  cacheKey       String   @unique  // e.g., "movies_en_page1", "tv_page2"
+  data           String   // JSON string of entire list response
+  lastUpdated    DateTime @default(now())
+  expiresAt      DateTime
+  
+  @@index([cacheKey])
+  @@index([expiresAt])
+}

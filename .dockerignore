@@ -1,0 +1,47 @@
+# Node modules (will be installed in container)
+node_modules/
+backend/node_modules/
+
+# Git
+.git/
+.gitignore
+
+# Environment files (will be provided at runtime)
+.env
+.env.*
+backend/.env
+backend/.env.*
+
+# Build artifacts (will be built in container)
+dist/
+build/
+
+# Development files
+*.md
+!README.md
+.vscode/
+.idea/
+
+# Database (will be persisted via volume)
+backend/prisma/*.db
+backend/prisma/*.db-journal
+
+# CI/CD
+.github/
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Documentation
+*.txt
+!IMPLEMENTATION_*.txt
+
+# Testing
+coverage/
+.cache/

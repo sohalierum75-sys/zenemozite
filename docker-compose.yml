@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  moviestream:
+    image: ${IMAGE_NAME:-ghcr.io/yourusername/moviestream:latest}
+    container_name: moviestream
+    restart: unless-stopped
+    
+    ports:
+      - "5000:5000"
+    
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - DATABASE_URL=file:/app/data/moviestream.db
+      # TMDB API key should be set in .env file or here
+      - TMDB_API_KEY=${TMDB_API_KEY}
+      - CACHE_DURATION_HOURS=${CACHE_DURATION_HOURS:-24}
+    
+    volumes:
+      # Persist SQLite database across container restarts
+      - moviestream-data:/app/data
+    
+    networks:
+      - moviestream-network
+    
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:5000/api/status', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    labels:
+      - "com.moviestream.description=MovieStream Backend Service"
+      - "com.moviestream.version=12.0"
+
+volumes:
+  moviestream-data:
+    driver: local
+
+networks:
+  moviestream-network:
+    driver: bridge

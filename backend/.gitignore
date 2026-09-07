@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Data files
+movies-data.json
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db

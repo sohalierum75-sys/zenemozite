@@ -1,0 +1,39 @@
+{
+  "name": "moviestream-backend",
+  "version": "9.0.0",
+  "description": "Automated movie streaming backend with TMDB, Apibay, and Prisma database integration",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "prisma:push": "prisma db push",
+    "setup": "npm install && prisma generate && prisma db push"
+  },
+  "keywords": [
+    "movies",
+    "tmdb",
+    "apibay",
+    "piratebay",
+    "streaming",
+    "torrents",
+    "automation",
+    "prisma",
+    "database"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "axios": "^1.6.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "torrent-search-api": "^2.1.4"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0"
+  }
+}
