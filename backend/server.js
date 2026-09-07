@@ -334,6 +334,16 @@ const APIBAY_BASE_URL = 'https://apibay.org';
 app.use(cors());
 app.use(express.json());
 
+// Serve static files from React app in production
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Serve static files
+app.use(express.static(path.join(__dirname, '../frontend/dist')));
+
 // Mock Movies - Only used if TMDB completely fails
 const MOCK_MOVIES = [
   {
@@ -2496,67 +2506,16 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-// Root endpoint
-app.get('/', (req, res) => {
-  res.json({
-    message: 'MovieStream API Server',
-    version: '12.0 - Multi-Source Fallback System',
-    description: 'Uses TMDB for metadata with robust multi-source torrent fallback: YTS/EZTV (Primary) -> TorrentGalaxy/1337x (Fallback) -> Apibay (Final Fallback)',
-    cache: {
-      enabled: true,
-      architecture: 'Dual in-memory cache (movieCache + torrentCache)',
-      strategy: 'Separate caches prevent rate limiting during traffic spikes',
-      rules: {
-        movieCache: {
-          singleMovieWithTorrents: '24 hours (stable torrents)',
-          singleMovieNoTorrents: '5 minutes (retry soon)',
-          movieLists: '6 hours (balanced freshness)',
-          tvShowLists: '6 hours (balanced freshness)'
-        },
-        torrentCache: {
-          torrentFound: '24 hours (stable)',
-          torrentNotFound: '2 hours (retry later)',
-          purpose: 'Prevents duplicate API requests for same movie/show'
-        }
-      },
-      maintenance: {
-        automaticCleanup: 'Every 30 minutes',
-        manualCleanup: 'POST /api/cache/cleanup',
-        clearAll: 'POST /api/cache/clear'
-      }
-    },
-    endpoints: {
-      englishMovies: '/api/movies?page=1',
-      tamilMovies: '/api/movies/tamil?page=1',
-      tvShows: '/api/tv?page=1',
-      singleMovie: '/api/movies/:id',
-      imdbMovie: '/api/movies/imdb/:code',
-      cacheStats: '/api/cache/stats',
-      cacheCleanup: '/api/cache/cleanup (POST)',
-      cacheClear: '/api/cache/clear (POST)',
-      status: '/api/status'
-    },
-    dataSources: {
-      metadata: 'TMDB API (Movies and TV Shows)',
-      movieTorrents: 'YTS API (Primary) -> TorrentGalaxy/1337x (Fallback) -> Apibay (Final Fallback)',
-      tvShowTorrents: 'EZTV API (Primary) -> TorrentGalaxy/1337x (Fallback) -> Apibay (Final Fallback)',
-      fallbackScrapers: 'TorrentGalaxy (Indian/Regional), 1337x (General), ThePirateBay (Fallback)'
-    },
-    features: {
-      multiSourceFallback: 'Ensures torrents always available',
-      ytsApi: 'Fast, high-quality movie torrents',
-      eztvApi: 'Reliable TV show episode torrents',
-      torrentGalaxy: 'Great for Indian and regional content',
-      dualCacheSystem: 'Separate movie and torrent caches',
-      rateLimitProtection: 'Torrent cache prevents duplicate API requests',
-      staggeredRequests: '1 second delay between episode requests',
-      automaticCleanup: 'Removes expired cache entries every 30 minutes',
-      performanceStats: 'Track cache hit rates and requests saved',
-      seasonPacks: 'TV show season packs and episode-specific torrents',
-      vidsrcStreaming: 'Movies use IMDb ID, TV shows use TMDB ID',
-      unifiedSearch: 'Single searchMedia function handles all torrent sources'
-    }
-  });
+
+// SPA Fallback: Serve index.html for all non-API routes
+// This must be AFTER all API routes
+app.get('*', (req, res) => {
+  // Only serve index.html for non-API routes
+  if (!req.path.startsWith('/api')) {
+    res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
+  } else {
+    res.status(404).json({ error: 'API endpoint not found' });
+  }
 });
 
 /**
