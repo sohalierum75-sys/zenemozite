@@ -4,7 +4,7 @@
 # ===========================================
 
 # Stage 1: Build Frontend
-FROM node:18-alpine AS frontend-builder
+FROM node:22-alpine AS frontend-builder
 
 WORKDIR /app
 
@@ -16,7 +16,7 @@ COPY tailwind.config.js ./
 COPY index.html ./
 
 # Install frontend dependencies
-RUN npm ci --only=production --ignore-scripts
+RUN npm ci --omit=dev --ignore-scripts
 
 # Copy frontend source
 COPY src/ ./src/
@@ -25,7 +25,7 @@ COPY src/ ./src/
 RUN npm run build
 
 # Stage 2: Build Backend Dependencies
-FROM node:18-alpine AS backend-builder
+FROM node:22-alpine AS backend-builder
 
 WORKDIR /app/backend
 
@@ -33,7 +33,7 @@ WORKDIR /app/backend
 COPY backend/package*.json ./
 
 # Install backend dependencies
-RUN npm ci --only=production --ignore-scripts
+RUN npm ci --omit=dev --ignore-scripts
 
 # Copy Prisma schema
 COPY backend/prisma ./prisma/
@@ -42,7 +42,7 @@ COPY backend/prisma ./prisma/
 RUN npx prisma generate
 
 # Stage 3: Production Runtime
-FROM node:18-alpine
+FROM node:22-alpine
 
 # Install dumb-init for proper signal handling
 RUN apk add --no-cache dumb-init
