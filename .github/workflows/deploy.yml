@@ -73,12 +73,58 @@ jobs:
           script: |
             cd /opt/zenemozite
             
-            # Set IMAGE_NAME environment variable
-            export IMAGE_NAME=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            # Create docker-compose.yml if it doesn't exist
+            cat > docker-compose.yml << 'EOF'
+            version: '3.8'
+
+            services:
+              zenemozite:
+                image: ghcr.io/sohalierum75-sys/zenemozite:latest
+                container_name: zenemozite
+                restart: unless-stopped
+                
+                ports:
+                  - "5000:5000"
+                
+                environment:
+                  - NODE_ENV=production
+                  - PORT=5000
+                  - DATABASE_URL=file:/app/data/zenemozite.db
+                  - TMDB_API_KEY=${TMDB_API_KEY}
+                  - CACHE_DURATION_HOURS=${CACHE_DURATION_HOURS:-24}
+                
+                volumes:
+                  - zenemozite-data:/app/data
+                
+                networks:
+                  - zenemozite-network
+                
+                healthcheck:
+                  test: ["CMD", "node", "-e", "require('http').get('http://localhost:5000/api/status', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+                  interval: 30s
+                  timeout: 10s
+                  retries: 3
+                  start_period: 40s
+
+            volumes:
+              zenemozite-data:
+                driver: local
+
+            networks:
+              zenemozite-network:
+                driver: bridge
+            EOF
+            
+            echo "✅ docker-compose.yml created/updated"
+            
+            # Load environment variables from .env if it exists
+            if [ -f .env ]; then
+              export $(cat .env | grep -v '^#' | xargs)
+            fi
             
             # Pull latest image
             echo "Pulling latest Docker image..."
-            docker pull $IMAGE_NAME
+            docker pull ghcr.io/sohalierum75-sys/zenemozite:latest
             
             # Stop and remove old container
             echo "Stopping old container..."
