@@ -71,7 +71,7 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           port: ${{ secrets.SERVER_PORT || 22 }}
           script: |
-            cd /opt/moviestream
+            cd /opt/zenemozite
             
             # Set IMAGE_NAME environment variable
             export IMAGE_NAME=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
@@ -82,22 +82,22 @@ jobs:
             
             # Stop and remove old container
             echo "Stopping old container..."
-            docker compose down
+            docker-compose down
             
             # Start new container
             echo "Starting new container..."
-            docker compose up -d
+            docker-compose up -d
             
             # Wait for container to be healthy
             echo "Waiting for container to be healthy..."
             sleep 10
             
             # Check if container is running
-            if docker compose ps | grep -q "moviestream.*Up"; then
+            if docker-compose ps | grep -q "zenemozite.*Up"; then
               echo "✅ Deployment successful! Container is running."
             else
               echo "❌ Deployment failed! Container is not running."
-              docker compose logs --tail=50
+              docker-compose logs --tail=50
               exit 1
             fi
             
@@ -110,7 +110,7 @@ jobs:
               echo "✅ Application is healthy and responding!"
             else
               echo "⚠️  Warning: Application health check returned $HEALTH_CHECK"
-              docker compose logs --tail=30
+              docker-compose logs --tail=30
             fi
             
             # Clean up old images

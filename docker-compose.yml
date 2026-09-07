@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  moviestream:
-    image: ${IMAGE_NAME:-ghcr.io/yourusername/moviestream:latest}
-    container_name: moviestream
+  zenemozite:
+    image: ${IMAGE_NAME:-ghcr.io/yourusername/zenemozite:latest}
+    container_name: zenemozite
     restart: unless-stopped
     
     ports:
@@ -12,17 +12,17 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=5000
-      - DATABASE_URL=file:/app/data/moviestream.db
+      - DATABASE_URL=file:/app/data/zenemozite.db
       # TMDB API key should be set in .env file or here
       - TMDB_API_KEY=${TMDB_API_KEY}
       - CACHE_DURATION_HOURS=${CACHE_DURATION_HOURS:-24}
     
     volumes:
       # Persist SQLite database across container restarts
-      - moviestream-data:/app/data
+      - zenemozite-data:/app/data
     
     networks:
-      - moviestream-network
+      - zenemozite-network
     
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:5000/api/status', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
@@ -32,13 +32,13 @@ services:
       start_period: 40s
     
     labels:
-      - "com.moviestream.description=MovieStream Backend Service"
-      - "com.moviestream.version=12.0"
+      - "com.zenemozite.description=Zenemozite Backend Service"
+      - "com.zenemozite.version=12.0"
 
 volumes:
-  moviestream-data:
+  zenemozite-data:
     driver: local
 
 networks:
-  moviestream-network:
+  zenemozite-network:
     driver: bridge
