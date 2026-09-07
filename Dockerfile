@@ -1,10 +1,11 @@
 # ===========================================
-# MovieStream Production Dockerfile
+# Zenemozite Production Dockerfile
 # Multi-stage build for optimized image size
+# Using Debian-based images for Prisma compatibility
 # ===========================================
 
 # Stage 1: Build Frontend
-FROM node:22-alpine AS frontend-builder
+FROM node:22-bookworm-slim AS frontend-builder
 
 WORKDIR /app
 
@@ -25,9 +26,12 @@ COPY src/ ./src/
 RUN npm run build
 
 # Stage 2: Build Backend Dependencies
-FROM node:22-alpine AS backend-builder
+FROM node:22-bookworm-slim AS backend-builder
 
 WORKDIR /app/backend
+
+# Install OpenSSL for Prisma (required for prisma generate)
+RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 # Copy backend package files
 COPY backend/package*.json ./
@@ -38,18 +42,20 @@ RUN npm ci --ignore-scripts
 # Copy Prisma schema
 COPY backend/prisma ./prisma/
 
-# Generate Prisma Client
+# Generate Prisma Client for Debian/glibc
 RUN npx prisma generate
 
 # Stage 3: Production Runtime
-FROM node:22-alpine
+FROM node:22-bookworm-slim
 
-# Install dumb-init for proper signal handling
-RUN apk add --no-cache dumb-init
+# Install runtime dependencies: OpenSSL and dumb-init
+RUN apt-get update && \
+    apt-get install -y openssl dumb-init && \
+    rm -rf /var/lib/apt/lists/*
 
 # Create app user for security (don't run as root)
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
+RUN groupadd -g 1001 nodejs && \
+    useradd -u 1001 -g nodejs -s /bin/bash -m nodejs
 
 WORKDIR /app
 
@@ -75,7 +81,7 @@ EXPOSE 5000
 
 # Set production environment
 ENV NODE_ENV=production
-ENV DATABASE_URL="file:/app/data/moviestream.db"
+ENV DATABASE_URL="file:/app/data/zenemozite.db"
 ENV PORT=5000
 
 # Health check
