@@ -59,6 +59,7 @@ model Movie {
   size             Float         // size of the largest file in the torrent (bytes)
   fileName         String?
   mimeType         String?
+  magnetLink       String?       // magnet of the torrent — stored when the movie is queued for caching
   telegramFileId   String?       // Telegram route (size <= 2GB) — no cleanup needed
   driveFileId      String?       // Google Drive route (size > 2GB)
   driveAccountId   String?       // which DriveAccount holds the file

@@ -5,9 +5,11 @@
 //   GET  /api/hybrid-cache/link/:id        -> direct download link + LRU timestamp update
 //   GET  /api/hybrid-cache/stats           -> per-account free space + cache counts
 //   POST /api/hybrid-cache/accounts/sync   -> seed DriveAccount rows from env credentials
+//   GET  /api/download/:id                 -> frontend DownloadButton endpoint (also
+//                                             mounted standalone at /api/download/:id)
 // ==============================================================================
 import express from 'express';
-import { startCacheJob, peekCacheEntry, getDownloadLink, getCacheStats, syncDriveAccounts } from './hybridCache.js';
+import { startCacheJob, peekCacheEntry, getDownloadLink, getCacheStats, syncDriveAccounts, cacheMovie } from './hybridCache.js';
 import { formatBytes } from './config.js';
 
 const router = express.Router();
@@ -53,6 +55,70 @@ router.post('/initiate', async (req, res) => {
     return res.status(status).json({ success: false, message: err.message });
   }
 });
+
+// ---------------------------------------------------------------------------
+// GET /download/:idOrTitle — endpoint used by the frontend DownloadButton.
+//   cached     -> touches lastDownloadedAt (LRU, requirement 5) and returns
+//                 { success: true, downloadUrl } — the button redirects to it.
+//   not cached -> queues the movie for caching (needs ?magnet= the first time)
+//                 and returns 202 { success: true, cached: false } — the button
+//                 keeps polling THIS SAME endpoint until downloadUrl is ready.
+// ---------------------------------------------------------------------------
+async function handleDownload(req, res) {
+  try {
+    const { idOrTitle } = req.params;
+    const magnetLink = req.query.magnet || null;
+    const title = req.query.title || null;
+
+    const entry = await peekCacheEntry(idOrTitle);
+
+    // ---- Already cached: LRU touch + direct link
+    if (entry && entry.cached) {
+      const link = await getDownloadLink(idOrTitle);
+      return res.json({
+        success: true,
+        cached: true,
+        downloadUrl: link.directLink,
+        storageType: link.storageType,
+        movieId: link.movie.id,
+        title: link.movie.title,
+        fileName: link.movie.fileName || null,
+        lastDownloadedAt: new Date().toISOString(),
+      });
+    }
+
+    // ---- Not cached: make sure a Movie row exists and carries the magnet so
+    //      the torrent-to-stream worker can pick the job up.
+    if (!entry && !magnetLink && !title) {
+      return res.status(404).json({
+        success: false,
+        message: 'Movie not found in the cache database. Provide ?magnet= (and optionally ?title=) to queue it for caching.',
+      });
+    }
+
+    const movie = await cacheMovie({
+      movieId: entry ? entry.movie.id : null,
+      title: entry ? entry.movie.title : title,
+      magnetLink,
+    });
+
+    return res.status(202).json({
+      success: true,
+      cached: false,
+      downloadUrl: null,
+      state: entry?.movie?.magnetLink ? 'awaiting-cache' : 'queued',
+      movieId: movie.id,
+      title: movie.title,
+      message: 'Movie queued for caching. Keep polling this endpoint — downloadUrl is returned once the file is stored.',
+    });
+  } catch (err) {
+    const status = httpStatus(err);
+    console.error(`[HYBRID_API] GET /download failed (${status}):`, err.message);
+    return res.status(status).json({ success: false, message: err.message });
+  }
+}
+
+router.get('/download/:idOrTitle', handleDownload);
 
 // ---------------------------------------------------------------------------
 // GET /status/:idOrTitle — current cache state (does NOT touch the LRU clock)
@@ -156,4 +222,11 @@ router.post('/accounts/sync', async (req, res) => {
   }
 });
 
+// The same handler exposed as a standalone router so server.js can mount it at
+// GET /api/download/:movieId — the exact URL contract the frontend
+// DownloadButton component uses.
+const downloadRouter = express.Router();
+downloadRouter.get('/:idOrTitle', handleDownload);
+
+export { downloadRouter };
 export default router;

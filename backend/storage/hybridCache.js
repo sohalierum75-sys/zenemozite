@@ -221,6 +221,52 @@ export async function startCacheJob(input = {}) {
   return { movie, state: 'started', route, promise };
 }
 
+/**
+ * Queue a movie for caching from its magnet link (NON-BLOCKING).
+ * Creates (or updates) the Movie row and stores the magnet so the
+ * torrent-to-stream pipeline can pick the job up — once the file is on disk it
+ * calls POST /initiate with the filePath and the real upload pipeline runs.
+ * Returns the DB record immediately (this is what GET /download calls for
+ * uncached movies).
+ */
+export async function cacheMovie({ movieId, title, magnetLink, size, fileName } = {}) {
+  if (!movieId && !title && !magnetLink) {
+    throw Object.assign(
+      new Error('cacheMovie requires at least one of: movieId, title, magnetLink'),
+      { statusCode: 400 }
+    );
+  }
+
+  // Reuse an existing record when possible (matched by id, then title)
+  let movie = null;
+  if (movieId) {
+    movie = await prisma.movie.findUnique({ where: { id: movieId } }).catch(() => null);
+  }
+  if (!movie && title) {
+    movie = await prisma.movie.findFirst({ where: { title } });
+  }
+
+  if (!movie) {
+    movie = await prisma.movie.create({
+      data: {
+        title: title || 'Unknown Title',
+        size: Number(size) || 0,
+        fileName: fileName || null,
+        magnetLink: magnetLink || null,
+        cachedAt: new Date(),
+        lastDownloadedAt: new Date(),
+      },
+    });
+    console.log(`[HYBRID_CACHE] Queued "${movie.title}" for caching (movieId ${movie.id})`);
+    return movie;
+  }
+
+  if (magnetLink && movie.magnetLink !== magnetLink) {
+    movie = await prisma.movie.update({ where: { id: movie.id }, data: { magnetLink } });
+  }
+  return movie;
+}
+
 /** Look up a cache entry WITHOUT touching LRU (used by /status) */
 export async function peekCacheEntry(idOrTitle) {
   if (!idOrTitle) return null;

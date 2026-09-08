@@ -3,7 +3,7 @@ import axios from 'axios';
 import cors from 'cors';
 import { PrismaClient } from '@prisma/client';
 import TorrentSearchApi from 'torrent-search-api';
-import hybridCacheRoutes from './storage/routes.js';
+import hybridCacheRoutes, { downloadRouter } from './storage/routes.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -337,6 +337,8 @@ app.use(express.json());
 
 // Hybrid Storage Cache — Telegram (<= 2GB) / Google Drive (> 2GB) + LRU cleanup
 app.use('/api/hybrid-cache', hybridCacheRoutes);
+// Direct download endpoint for the frontend DownloadButton (GET /api/download/:movieId)
+app.use('/api/download', downloadRouter);
 
 // Serve static files from React app in production
 import path from 'path';
