@@ -45,3 +45,38 @@ model ListCache {
   @@index([cacheKey])
   @@index([expiresAt])
 }
+
+// ==============================================================================
+// HYBRID STORAGE CACHE
+// Routes cached movie files to Telegram (<= 2GB, unlimited retention) or
+// Google Drive (> 2GB, multi-account load balancing + LRU auto-cleanup).
+// Byte sizes are stored as Float (exact up to ~9 petabytes, JSON-safe).
+// ==============================================================================
+
+model Movie {
+  id               String        @id @default(uuid())
+  title            String
+  size             Float         // size of the largest file in the torrent (bytes)
+  fileName         String?
+  mimeType         String?
+  telegramFileId   String?       // Telegram route (size <= 2GB) — no cleanup needed
+  driveFileId      String?       // Google Drive route (size > 2GB)
+  driveAccountId   String?       // which DriveAccount holds the file
+  driveAccount     DriveAccount? @relation(fields: [driveAccountId], references: [id])
+  lastDownloadedAt DateTime      @default(now()) // touched on EVERY link request (LRU)
+  cachedAt         DateTime      @default(now())
+
+  @@index([lastDownloadedAt])
+  @@index([driveAccountId])
+}
+
+model DriveAccount {
+  id          String   @id @default(uuid())
+  credentials String   // service-account JSON (stringified) or path to the key file
+  email       String?  // client_email — readable identifier for logs
+  totalSpace  Float    // account quota in bytes
+  usedSpace   Float    @default(0)
+  movies      Movie[]
+
+  @@unique([email])
+}

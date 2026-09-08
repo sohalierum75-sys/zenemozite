@@ -3,6 +3,7 @@ import axios from 'axios';
 import cors from 'cors';
 import { PrismaClient } from '@prisma/client';
 import TorrentSearchApi from 'torrent-search-api';
+import hybridCacheRoutes from './storage/routes.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -333,6 +334,9 @@ const APIBAY_BASE_URL = 'https://apibay.org';
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Hybrid Storage Cache — Telegram (<= 2GB) / Google Drive (> 2GB) + LRU cleanup
+app.use('/api/hybrid-cache', hybridCacheRoutes);
 
 // Serve static files from React app in production
 import path from 'path';
