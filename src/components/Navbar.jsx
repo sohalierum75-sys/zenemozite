@@ -128,15 +128,16 @@ const Navbar = () => {
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <Link to="/" className="flex items-center space-x-2 group">
-            <Film 
-              className="w-8 h-8 transition-all duration-350" 
-              style={{ color: accentColor }}
+            <img 
+              src="/logo.jpeg" 
+              alt="Zinemo Logo" 
+              className="w-8 h-8 rounded-lg object-cover transition-all duration-350 group-hover:scale-110" 
             />
             <span 
               className="text-2xl font-bold transition-all duration-350"
               style={{ color: accentColor }}
             >
-              CineVault
+              Zinemo
             </span>
           </Link>
 

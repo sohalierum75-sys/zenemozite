@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Film, Github, Twitter, Mail } from 'lucide-react';
+import { Github, Twitter, Mail } from 'lucide-react';
 
 const Footer = () => {
   const currentYear = new Date().getFullYear();
@@ -12,8 +12,12 @@ const Footer = () => {
           {/* Brand Section */}
           <div className="col-span-1 md:col-span-2">
             <div className="flex items-center space-x-2 mb-4">
-              <Film className="w-8 h-8 text-[var(--accent)] transition-accent" />
-              <span className="text-2xl font-bold text-[var(--accent)] transition-accent">CineVault</span>
+              <img 
+                src="/logo.jpeg" 
+                alt="Zinemo Logo" 
+                className="w-8 h-8 rounded-lg object-cover" 
+              />
+              <span className="text-2xl font-bold text-[var(--accent)] transition-accent">Zinemo</span>
             </div>
             <p className="text-[#8b94a6] text-sm leading-relaxed max-w-md">
               Your ultimate destination for streaming and downloading the latest movies in high quality. 
@@ -79,7 +83,7 @@ const Footer = () => {
         {/* Social Links & Copyright */}
         <div className="mt-8 pt-8 border-t border-white/5 flex flex-col md:flex-row justify-between items-center">
           <p className="text-[#8b94a6] text-sm">
-            © {currentYear} <span className="text-[var(--accent)] transition-accent">CineVault</span>. All rights reserved.
+            © {currentYear} <span className="text-[var(--accent)] transition-accent">Zinemo</span>. All rights reserved.
           </p>
           
           {/* Social Icons */}
@@ -101,7 +105,7 @@ const Footer = () => {
               <Twitter className="w-5 h-5" />
             </a>
             <a 
-              href="mailto:contact@cinevault.com"
+              href="mailto:contact@zinemo.com"
               className="text-[#8b94a6] hover:text-[var(--accent)] transition-accent"
             >
               <Mail className="w-5 h-5" />
