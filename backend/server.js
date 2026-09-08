@@ -803,6 +803,320 @@ async function searchMultiTrackerFallback(title, year = '', category = 'Video', 
     return [];
   }
 }
+/**
+ * ============================================================================
+ * AUTOMATED REPORT & FIX BROKEN LINK SYSTEM
+ * ============================================================================
+ * When a user reports a broken download link:
+ *   1. Searches MULTIPLE torrent providers SIMULTANEOUSLY (1337x, ThePirateBay,
+ *      TorrentGalaxy*, KickassTorrents, Limetorrents, TorrentProject) via
+ *      torrent-search-api   (* when available on the installed version)
+ *   2. Aggregates every result and picks the one with the HIGHEST seeders
+ *   3. Saves the new magnet link into the Prisma database (MediaCache)
+ *   4. Invalidates the in-memory caches so the fix is served instantly
+ * NOTE: No torrent/video files are ever saved on the VPS - magnet links only.
+ * ============================================================================
+ */
+
+// Extra providers used only by the broken-link recovery search
+const REPORT_EXTRA_PROVIDERS = ['KickassTorrents', 'Limetorrents', 'TorrentProject'];
+
+// Each provider uses its own category vocabulary
+const REPORT_PROVIDER_CATEGORIES = {
+  ThePirateBay: { movie: 'Video', tv: 'Video' },
+  '1337x': { movie: 'Movies', tv: 'TV' },
+  TorrentGalaxy: { movie: 'Movies', tv: 'TV' },
+  KickassTorrents: { movie: 'Movies', tv: 'TV' },
+  Limetorrents: { movie: 'Movies', tv: 'TV' },
+  TorrentProject: { movie: 'All', tv: 'All' }
+};
+
+/**
+ * Make sure every report provider is active before searching.
+ * Returns the active list + the providers we enabled ourselves (they are
+ * restored afterwards so the rest of the app keeps its original config).
+ */
+function activateReportProviders() {
+  const active = [];
+  const newlyEnabled = [];
+
+  for (const provider of [...enabledProviders, ...REPORT_EXTRA_PROVIDERS]) {
+    try {
+      if (!TorrentSearchApi.isProviderActive(provider)) {
+        TorrentSearchApi.enableProvider(provider);
+        newlyEnabled.push(provider);
+      }
+      active.push(provider);
+    } catch (e) {
+      console.log(`[BROKEN_LINK_FIX] Provider "${provider}" unavailable: ${e.message}`);
+    }
+  }
+
+  console.log(`[BROKEN_LINK_FIX] Providers to search simultaneously: ${active.join(', ')}`);
+  return { active, newlyEnabled };
+}
+
+/**
+ * Restore the provider configuration that existed before the report search
+ */
+function restoreReportProviders(newlyEnabled) {
+  for (const provider of newlyEnabled || []) {
+    try {
+      TorrentSearchApi.disableProvider(provider);
+    } catch (e) {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * Invalidate the in-memory caches for a title so the fixed magnet
+ * is served on the very next request (no stale 24h cache)
+ */
+function invalidateCachesForMedia(title, tmdbId) {
+  try {
+    if (tmdbId) {
+      movieCache.delete(`movie_${tmdbId}`);
+    }
+    const baseSlug = String(title || '').toLowerCase().replace(/[^a-z0-9]/g, '_');
+    for (const key of Array.from(torrentCache.keys())) {
+      if (key.startsWith(baseSlug)) {
+        torrentCache.delete(key);
+      }
+    }
+    console.log(`[BROKEN_LINK_FIX] In-memory caches invalidated for "${title}"`);
+  } catch (e) {
+    console.log(`[BROKEN_LINK_FIX] Cache invalidation warning: ${e.message}`);
+  }
+}
+
+/**
+ * Persist the replacement torrent in the database (Prisma MediaCache).
+ * The new magnet is placed at the TOP of the torrent list.
+ */
+async function persistReplacementTorrent({ movieId, title, year, imdbId, mediaType, torrent }) {
+  // STEP 1: Locate the cached record - by TMDB id, then IMDb id, then title
+  let record = null;
+
+  if (movieId) {
+    record = await prisma.mediaCache.findUnique({ where: { tmdbId: String(movieId) } });
+  }
+  if (!record && imdbId) {
+    record = await prisma.mediaCache.findFirst({ where: { imdbId } });
+  }
+  if (!record && title) {
+    record = await prisma.mediaCache.findFirst({
+      where: {
+        title: { contains: title },
+        ...(year ? { year: String(year) } : {})
+      }
+    });
+  }
+
+  const newInfoHash = extractInfoHash(torrent.url);
+
+  // STEP 2: Merge - new magnet first, dropping duplicates of the same info hash
+  let existingTorrents = [];
+  if (record?.torrents) {
+    try {
+      existingTorrents = JSON.parse(record.torrents) || [];
+    } catch (e) {
+      existingTorrents = [];
+    }
+  }
+
+  const deduped = existingTorrents.filter((t) => {
+    const hash = extractInfoHash(t?.url);
+    return !newInfoHash || !hash || hash !== newInfoHash;
+  });
+
+  const updatedTorrents = [torrent, ...deduped];
+
+  // STEP 3: Update the existing record, or create one if this media was never cached
+  if (record) {
+    const updated = await prisma.mediaCache.update({
+      where: { id: record.id },
+      data: {
+        torrents: JSON.stringify(updatedTorrents),
+        lastUpdated: new Date()
+      }
+    });
+    console.log(`[BROKEN_LINK_FIX] Database updated for "${record.title}" (new torrent placed first, ${updatedTorrents.length} total)`);
+    invalidateCachesForMedia(record.title, record.tmdbId);
+    return updated;
+  }
+
+  const created = await prisma.mediaCache.create({
+    data: {
+      tmdbId: movieId ? String(movieId) : `report_${newInfoHash || Date.now()}`,
+      mediaType: mediaType === 'tv' ? 'tv' : 'movie',
+      imdbId: imdbId || null,
+      title: title || 'Unknown Title',
+      year: year ? String(year) : null,
+      torrents: JSON.stringify([torrent])
+    }
+  });
+  console.log(`[BROKEN_LINK_FIX] Created database record for "${created.title}" with the new magnet`);
+  invalidateCachesForMedia(created.title, created.tmdbId);
+  return created;
+}
+
+/**
+ * Search a single provider with a hard timeout - never throws
+ */
+async function searchReportProvider(provider, query, category, limit, timeoutMs = 15000) {
+  let timeoutId = null;
+  try {
+    const results = await Promise.race([
+      TorrentSearchApi.search([provider], query, category, limit),
+      new Promise((resolve) => {
+        timeoutId = setTimeout(() => {
+          console.log(`[BROKEN_LINK_FIX] Provider "${provider}" timed out after ${timeoutMs}ms`);
+          resolve(null);
+        }, timeoutMs);
+      })
+    ]);
+    return Array.isArray(results) ? results : [];
+  } catch (e) {
+    console.log(`[BROKEN_LINK_FIX] Provider "${provider}" search failed: ${e.message}`);
+    return [];
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Resolve the magnet link of a raw provider result with a hard timeout
+ */
+async function getReportMagnet(rawTorrent, timeoutMs = 10000) {
+  let timeoutId = null;
+  try {
+    const magnet = await Promise.race([
+      TorrentSearchApi.getMagnet(rawTorrent),
+      new Promise((resolve) => {
+        timeoutId = setTimeout(() => resolve(null), timeoutMs);
+      })
+    ]);
+    if (magnet && typeof magnet === 'string' && /^magnet:\?xt=urn:btih:[0-9a-zA-Z]{32,40}/.test(magnet)) {
+      return magnet;
+    }
+    return null;
+  } catch (e) {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Extract the info hash (btih) from a magnet link
+ */
+function extractInfoHash(magnet) {
+  const match = String(magnet || '').match(/btih:([0-9a-zA-Z]+)/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+/**
+ * BROKEN LINK RECOVERY SEARCH
+ * Fires every provider at the same time, aggregates all results,
+ * and returns the torrent with the HIGHEST number of seeders.
+ */
+async function findReplacementTorrent(title, year = '', imdbId = null, mediaType = 'movie') {
+  const cleanedTitle = cleanTitleForSearch(title);
+  if (!cleanedTitle && !imdbId) return null;
+
+  // Try "title year" first, then the plain title as a fallback query
+  const queries = [];
+  if (cleanedTitle && year) queries.push(`${cleanedTitle} ${year}`);
+  if (cleanedTitle) queries.push(cleanedTitle);
+
+  const { active: providers, newlyEnabled } = activateReportProviders();
+
+  try {
+    for (const query of queries) {
+      console.log(`[BROKEN_LINK_FIX] Query: "${query}"`);
+
+      // STEP 1: Search ALL providers simultaneously
+      const outcomes = await Promise.allSettled(
+        providers.map((provider) => {
+          const categoryMap = REPORT_PROVIDER_CATEGORIES[provider] || { movie: 'All', tv: 'All' };
+          const category = mediaType === 'tv' ? categoryMap.tv : categoryMap.movie;
+          return searchReportProvider(provider, query, category, 10);
+        })
+      );
+
+      // STEP 2: Aggregate every alive torrent from every provider (deduped)
+      const aggregated = [];
+      const seen = new Set();
+
+      outcomes.forEach((outcome, index) => {
+        if (outcome.status !== 'fulfilled' || !Array.isArray(outcome.value)) return;
+        const provider = providers[index];
+        let aliveCount = 0;
+
+        for (const result of outcome.value) {
+          if (!result) continue;
+
+          const seeders = parseInt(result.seeds) || parseInt(result.seeders) || 0;
+          if (seeders <= 0) continue; // Dead torrent - skip it
+
+          const dedupeKey = `${provider}:${result.desc || result.link || result.title}`;
+          if (seen.has(dedupeKey)) continue;
+          seen.add(dedupeKey);
+
+          aggregated.push({ ...result, provider, seeders });
+          aliveCount++;
+        }
+
+        console.log(`[BROKEN_LINK_FIX]   ${provider}: ${aliveCount} alive torrents`);
+      });
+
+      if (aggregated.length === 0) {
+        console.log('[BROKEN_LINK_FIX] No alive torrents for this query, trying the next query...');
+        continue;
+      }
+
+      // STEP 3: Sort by seeders - highest first - and take the top candidates
+      aggregated.sort((a, b) => b.seeders - a.seeders);
+      const candidates = aggregated.slice(0, 6);
+      console.log(`[BROKEN_LINK_FIX] ${aggregated.length} alive torrents aggregated. Resolving magnets for the top ${candidates.length}...`);
+
+      // STEP 4: Resolve magnet links top-down (staggered to avoid rate limiting).
+      // The list is sorted by seeders, so the FIRST candidate that yields a
+      // valid magnet IS the highest-seeded torrent - stop immediately.
+      for (let i = 0; i < candidates.length; i++) {
+        if (i > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 400));
+        }
+        const magnet = await getReportMagnet(candidates[i]);
+        if (!magnet) continue;
+
+        const best = candidates[i];
+        console.log(`[BROKEN_LINK_FIX] WINNER: [${best.provider}] "${best.title}" - ${best.seeders} seeders`);
+
+        return {
+          url: magnet,
+          quality: extractQuality(best.title || ''),
+          size: typeof best.size === 'number' ? formatFileSize(best.size) : (best.size || 'Unknown'),
+          type: 'magnet',
+          seeders: best.seeders,
+          leechers: parseInt(best.peers) || parseInt(best.leechers) || 0,
+          name: best.title || 'Unknown',
+          provider: best.provider || 'Multi-Tracker'
+        };
+      }
+
+      console.log('[BROKEN_LINK_FIX] Could not resolve any magnet, trying the next query...');
+      continue;
+    }
+
+    console.log('[BROKEN_LINK_FIX] No replacement torrent found on any provider');
+    return null;
+  } finally {
+    // Put the global provider configuration back the way we found it
+    restoreReportProviders(newlyEnabled);
+  }
+}
 
 /**
  * UNIFIED SEARCH MEDIA FUNCTION
@@ -2506,6 +2820,69 @@ app.get('/api/status', (req, res) => {
   });
 });
 
+
+// ============================================================================
+// AUTOMATED REPORT & FIX BROKEN LINK ENDPOINT
+// The frontend sends { movieId, title, year, imdbId, mediaType } and receives
+// a fresh, highly-seeded magnet link that has already been saved to the DB.
+// ============================================================================
+app.post('/api/report-broken-link', async (req, res) => {
+  const { movieId, title, year, imdbId, mediaType } = req.body || {};
+
+  console.log(`\n[API] POST /api/report-broken-link`);
+  console.log(`[BROKEN_LINK_REPORT] Report: "${title || 'n/a'}" (${year || 'n/a'}) | IMDb: ${imdbId || 'n/a'} | TMDB: ${movieId || 'n/a'}`);
+
+  // STEP 1: Validate - we need something to search with
+  if (!title && !imdbId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Please provide at least a title or an IMDb ID with your report.'
+    });
+  }
+
+  try {
+    // STEP 2: Search MULTIPLE providers simultaneously and pick the highest-seeded torrent
+    const torrent = await findReplacementTorrent(title, year, imdbId, mediaType);
+
+    if (!torrent) {
+      console.log('[BROKEN_LINK_REPORT] No replacement torrent found');
+      return res.status(404).json({
+        success: false,
+        message: 'No active torrent was found on any provider. Please try again later.'
+      });
+    }
+
+    // STEP 3: Update the database with the new magnet link
+    let dbRecord = null;
+    try {
+      dbRecord = await persistReplacementTorrent({ movieId, title, year, imdbId, mediaType, torrent });
+    } catch (dbError) {
+      console.error('[BROKEN_LINK_REPORT] Database update failed:', dbError.message);
+    }
+
+    console.log(`[BROKEN_LINK_REPORT] FIXED - new magnet from [${torrent.provider}] with ${torrent.seeders} seeders`);
+
+    // STEP 4: Return the new magnet link to the frontend
+    res.json({
+      success: true,
+      message: 'A new, highly-seeded magnet link was found and saved.',
+      data: {
+        magnet: torrent.url,
+        torrent: torrent,
+        dbUpdated: Boolean(dbRecord),
+        dbRecordId: dbRecord?.id || null
+      },
+      source: 'Broken-Link Recovery (Multi-Provider)'
+    });
+  } catch (error) {
+    console.error('[BROKEN_LINK_REPORT] Endpoint crashed:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process the broken link report.',
+      error: error.message
+    });
+  }
+});
 
 // SPA Fallback: Serve index.html for all non-API routes
 // This must be AFTER all API routes

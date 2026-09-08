@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, Search, MessageSquare } from 'lucide-react';
 import WebtorModal from '../components/WebtorModal';
+import ReportBrokenLink from '../components/ReportBrokenLink';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
@@ -86,6 +87,25 @@ const SingleMovie = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Called by ReportBrokenLink once the backend finds a replacement magnet.
+  // Updates the torrent list AND automatically resumes the direct download
+  // generation with the new magnet - no refresh or extra clicks needed.
+  const handleLinkReplaced = (newTorrent) => {
+    if (!newTorrent || !newTorrent.url) return;
+
+    console.log('[MOVIE] Broken link replaced - resuming download with new magnet');
+
+    // Put the fresh, high-seeded torrent at the top of the list
+    setMovie((prev) =>
+      prev
+        ? { ...prev, torrents: [newTorrent, ...(prev.torrents || [])] }
+        : prev
+    );
+
+    // Automatically resume the direct download generation with the new magnet
+    setActiveWebtorMagnet(newTorrent.url);
   };
 
   const hasTorrents = movie?.torrents && Array.isArray(movie.torrents) && movie.torrents.length > 0;
@@ -474,6 +494,16 @@ const SingleMovie = () => {
                     })}
                   </div>
 
+                  {/* Automated Report & Fix Broken Link */}
+                  <ReportBrokenLink
+                    title={movie?.title}
+                    year={movie?.year}
+                    imdbId={movie?.imdb_id}
+                    movieId={movie?.id}
+                    mediaType={movie?.type || 'movie'}
+                    onLinkReplaced={handleLinkReplaced}
+                  />
+
                   {/* Info Box */}
                   <div className="mt-6 glass-card rounded-xl p-4">
                     <p className="text-[#8b94a6] text-sm leading-relaxed">
@@ -493,6 +523,18 @@ const SingleMovie = () => {
                   <p className="text-[#8b94a6] mb-6">
                     Please check back later or search manually.
                   </p>
+
+                  {/* Automated Report & Fix Broken Link */}
+                  <div className="max-w-md mx-auto text-left">
+                    <ReportBrokenLink
+                      title={movie?.title}
+                      year={movie?.year}
+                      imdbId={movie?.imdb_id}
+                      movieId={movie?.id}
+                      mediaType={movie?.type || 'movie'}
+                      onLinkReplaced={handleLinkReplaced}
+                    />
+                  </div>
                   <a
                     href={`https://1377x.to/search/${encodeURIComponent(movie?.title || 'movie')}/1/`}
                     target="_blank"
