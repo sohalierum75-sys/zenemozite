@@ -7,7 +7,12 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = "file:./moviestream.db"
+  // Read from the environment so Docker deployments persist the database on
+  // the /app/data volume (DATABASE_URL=file:/app/data/zenemozite.db).
+  // A hardcoded url here makes Prisma ignore DATABASE_URL entirely, leaving
+  // the database inside the container's ephemeral layer — wiped on every
+  // deploy/recreate.
+  url      = env("DATABASE_URL")
 }
 
 // MediaCache model - Stores cached movie and TV show data

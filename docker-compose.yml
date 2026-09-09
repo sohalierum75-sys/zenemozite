@@ -17,6 +17,11 @@ services:
       # TMDB API key should be set in .env file or here
       - TMDB_API_KEY=${TMDB_API_KEY}
       - CACHE_DURATION_HOURS=${CACHE_DURATION_HOURS:-24}
+      # Telegram CDN (private channel used as the file cache backend) —
+      # read from the host .env; the CDN worker fails fast when missing.
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - TELEGRAM_LOCAL_API_URL=${TELEGRAM_LOCAL_API_URL:-http://localhost:8081}
     
     volumes:
       # Persist SQLite database across container restarts
