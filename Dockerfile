@@ -69,13 +69,17 @@ WORKDIR /app
 COPY --from=backend-builder --chown=nodejs:nodejs /app/backend/node_modules ./backend/node_modules
 
 # Copy backend source code (EVERYTHING the runtime imports)
-#   server.js     -> Express entrypoint
+#   backend/*.js  -> ALL backend root JS modules:
+#                      server.js   -> Express entrypoint
+#                      listCache.js -> TMDB list caching (imported by server.js)
+#                    Using a glob instead of copying server.js alone ensures any
+#                    new backend root module is included automatically.
 #   storage/      -> hybrid cache module (Telegram / Google Drive / LRU), imported by server.js
 #   prisma/       -> schema.prisma + client.js (client.js is imported by storage/hybridCache.js)
 #   package*.json -> package metadata
 # NOTE: .dockerignore keeps secrets (backend/.env) and dev databases (*.db) out of the
 #       image; runtime DATABASE_URL always points at /app/data/zenemozite.db (volume).
-COPY --chown=nodejs:nodejs backend/server.js ./backend/
+COPY --chown=nodejs:nodejs backend/*.js ./backend/
 COPY --chown=nodejs:nodejs backend/storage ./backend/storage/
 COPY --chown=nodejs:nodejs backend/prisma/schema.prisma backend/prisma/client.js ./backend/prisma/
 COPY --chown=nodejs:nodejs backend/package*.json ./backend/
