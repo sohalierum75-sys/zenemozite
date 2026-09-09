@@ -45,6 +45,18 @@ COPY backend/package*.json ./
 # Install ALL backend dependencies (including prisma needed for generate)
 RUN npm ci --ignore-scripts
 
+# node-datachannel (pulled in by webtorrent -> webrtc-polyfill) ships its
+# native WebRTC addon as a PREBUILT N-API binary that its `install` script
+# downloads via prebuild-install. `npm ci --ignore-scripts` skips that script,
+# so build/Release/node_datachannel.node would be missing and the container
+# would crash at startup ("Cannot find module ... node_datachannel.node").
+# Rebuild ONLY node-datachannel to fetch the prebuilt linux-x64 glibc binary:
+# N-API 8 is ABI-stable, so it works with any Node >= 18.20 (incl. v22.x) and
+# needs no compiler toolchain. Fail the build loudly if it cannot be fetched.
+RUN npm rebuild node-datachannel \
+    && test -f node_modules/node-datachannel/build/Release/node_datachannel.node \
+    && node -e "require('node-datachannel'); console.log('node-datachannel native binary OK')"
+
 # Copy Prisma schema
 COPY backend/prisma ./prisma/
 
@@ -90,6 +102,11 @@ RUN chmod +x ./backend/entrypoint.sh
 
 # Copy frontend build output
 COPY --from=frontend-builder --chown=nodejs:nodejs /app/dist ./frontend/dist
+
+# Verify the node-datachannel native addon was retained through the multi-stage
+# copy (node_modules is copied wholesale, so the binary travels with it) and
+# actually loads in the runtime image (Debian glibc, Node 22):
+RUN node -e "require('/app/backend/node_modules/node-datachannel'); console.log('node-datachannel loads in runtime image')"
 
 # Create directory for SQLite database with proper permissions
 RUN mkdir -p /app/data && chown -R nodejs:nodejs /app/data
