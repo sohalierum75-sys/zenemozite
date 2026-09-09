@@ -522,6 +522,106 @@ function formatFileSize(bytes) {
   }
 }
 
+// ==============================================================================
+// TORRENT SIZE LIMITS
+// The CDN caches every download via Telegram, so oversized files (e.g. 4K
+// remuxes at 10+ GB) take hours to download and upload. STRICT POLICY:
+//   1. Any torrent larger than 3.5 GB is COMPLETELY IGNORED (hard cap).
+//   2. Target the standard 1080p/720p band: 800 MB - 3.5 GB.
+//   3. Survivors are sorted by seeders (highest first).
+//   4. At most 4 torrents are returned to the cache / frontend.
+// ==============================================================================
+const MAX_TORRENT_SIZE_GB = 3.5;
+const MAX_TORRENT_SIZE_BYTES = MAX_TORRENT_SIZE_GB * 1024 * 1024 * 1024;
+const IDEAL_MIN_TORRENT_SIZE_GB = 0.8; // ~800 MB — standard 1080p/720p floor
+const IDEAL_MIN_TORRENT_SIZE_BYTES = IDEAL_MIN_TORRENT_SIZE_GB * 1024 * 1024 * 1024;
+
+/**
+ * Parse a torrent's size into raw bytes from whatever representation a
+ * provider gives us:
+ *   - a pre-attached numeric `sizeBytes` (exact, preferred)
+ *   - a numeric `size` (raw bytes — Apibay / some Multi-Tracker results)
+ *   - a formatted string `size` ("1.85 GB", "700.00 MB", "12345678")
+ * Returns null when the size cannot be determined (such torrents are KEPT —
+ * an unknown size is not proof of being oversized).
+ */
+function parseTorrentSizeBytes(torrent) {
+  if (!torrent) return null;
+
+  if (Number.isFinite(torrent.sizeBytes)) return torrent.sizeBytes;
+
+  const raw = torrent.size;
+  if (raw === null || raw === undefined) return null;
+
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+
+  if (typeof raw === 'string') {
+    const match = raw.replace(/,/g, '').match(/([\d.]+)\s*(bytes|b|kb|kib|mb|mib|gb|gib|tb|tib)?/i);
+    if (!match) return null;
+    const value = parseFloat(match[1]);
+    if (!Number.isFinite(value)) return null;
+    const unit = (match[2] || 'bytes').toLowerCase();
+    const multipliers = {
+      b: 1, bytes: 1,
+      kb: 1024, kib: 1024,
+      mb: 1024 ** 2, mib: 1024 ** 2,
+      gb: 1024 ** 3, gib: 1024 ** 3,
+      tb: 1024 ** 4, tib: 1024 ** 4,
+    };
+    return value * (multipliers[unit] || 1);
+  }
+
+  return null;
+}
+
+/**
+ * SHARED SIZE FILTER + RANKER — applied to EVERY torrent list before it is
+ * cached or returned to the frontend:
+ *   1. Completely ignores any torrent larger than 3.5 GB (hard cap).
+ *   2. Flags results below the 800 MB ideal band (kept — valid small rips).
+ *   3. Sorts the survivors by seeders (highest first).
+ *   4. Returns at most `limit` (default 4) torrents.
+ */
+function filterTorrentsBySizeAndSeeders(torrents, { limit = 4, source = '' } = {}) {
+  if (!Array.isArray(torrents) || torrents.length === 0) return [];
+
+  const tag = source ? ` [${source}]` : '';
+  const kept = [];
+  const oversized = [];
+
+  for (const torrent of torrents) {
+    const sizeBytes = parseTorrentSizeBytes(torrent);
+
+    // 1. HARD CAP — completely ignore anything larger than 3.5 GB
+    if (sizeBytes !== null && sizeBytes > MAX_TORRENT_SIZE_BYTES) {
+      oversized.push(torrent);
+      continue;
+    }
+    kept.push(torrent);
+  }
+
+  if (oversized.length > 0) {
+    console.log(`[SIZE_FILTER]${tag} Ignored ${oversized.length} oversized torrent(s) > ${MAX_TORRENT_SIZE_GB} GB: ${oversized.slice(0, 3).map(t => `"${String(t.name || '?').slice(0, 50)}" (${t.size || 'Unknown'})`).join(', ')}${oversized.length > 3 ? ', ...' : ''}`);
+  }
+
+  // 2. Sort the surviving valid torrents by seeders — highest first
+  kept.sort((a, b) => (b.seeders || 0) - (a.seeders || 0));
+
+  // 3. Return only the top N (default 4) to the cache / frontend
+  const ranked = kept.slice(0, limit);
+
+  if (ranked.length > 0) {
+    console.log(`[SIZE_FILTER]${tag} ${ranked.length} torrent(s) within the ${IDEAL_MIN_TORRENT_SIZE_GB}-${MAX_TORRENT_SIZE_GB} GB target (sorted by seeders):`);
+    ranked.forEach((t, i) => {
+      const bytes = parseTorrentSizeBytes(t);
+      const bandFlag = bytes !== null && bytes < IDEAL_MIN_TORRENT_SIZE_BYTES ? ' [below 800 MB band]' : '';
+      console.log(`  ${i + 1}. [${t.provider || '?'}] ${t.quality || '?'} - ${t.size || 'Unknown'} - ${t.seeders || 0} seeders${bandFlag}`);
+    });
+  }
+
+  return ranked;
+}
+
 /**
  * Clean title for Apibay search queries
  * Removes special characters that cause search failures
@@ -620,6 +720,7 @@ async function searchMovieTorrentsYTS(movieTitle, year, imdbId = null) {
           url: magnetLink,
           quality: torrent.quality || 'Unknown',
           size: torrent.size || 'Unknown',
+          sizeBytes: parseTorrentSizeBytes({ size: torrent.size }),
           type: 'magnet',
           seeders: parseInt(torrent.seeds) || 0,
           leechers: parseInt(torrent.peers) || 0,
@@ -714,8 +815,14 @@ async function searchTVShowTorrentsEZTV(showTitle, season = null, episode = null
     }
     
     // Map EZTV torrents to standardized format
+    // STRICT SIZE CAP: drop torrents > 3.5 GB BEFORE slicing so oversized
+    // releases can never displace valid 720p/1080p ones
     const mappedTorrents = torrents
       .filter(t => t.hash && t.magnet_url)
+      .filter(t => {
+        const bytes = Number(t.size_bytes);
+        return !bytes || bytes <= MAX_TORRENT_SIZE_BYTES;
+      })
       .slice(0, 5)
       .map(torrent => {
         // Extract quality from title
@@ -731,6 +838,7 @@ async function searchTVShowTorrentsEZTV(showTitle, season = null, episode = null
           url: torrent.magnet_url,
           quality: quality,
           size: size,
+          sizeBytes: Number(torrent.size_bytes) || null,
           type: 'magnet',
           seeders: parseInt(torrent.seeds) || 0,
           leechers: parseInt(torrent.peers) || 0,
@@ -814,6 +922,7 @@ async function searchMultiTrackerFallback(title, year = '', category = 'Video', 
             url: magnetLink,
             quality: quality,
             size: size,
+            sizeBytes: parseTorrentSizeBytes({ size: result.size }),
             type: 'magnet',
             seeders: seeders,
             leechers: leechers,
@@ -827,21 +936,18 @@ async function searchMultiTrackerFallback(title, year = '', category = 'Video', 
       })
     );
     
-    // Filter out nulls and dead torrents, then sort by seeders
-    const validTorrents = torrentsWithMagnets
-      .filter(Boolean)
-      .filter(t => t.seeders > 0)
-      .sort((a, b) => b.seeders - a.seeders)
-      .slice(0, 4);
+    // Filter out nulls and dead torrents, then apply the STRICT SIZE CAP
+    // (completely ignore > 3.5 GB) and rank the survivors by seeders (top 4)
+    const validTorrents = filterTorrentsBySizeAndSeeders(
+      torrentsWithMagnets.filter(Boolean).filter(t => t.seeders > 0),
+      { limit: 4, source: 'MULTI_TRACKER' }
+    );
     
     if (validTorrents.length > 0) {
-      console.log(`[MULTI_TRACKER] Returning ${validTorrents.length} active torrents (sorted by seeders)`);
-      validTorrents.forEach((t, i) => {
-        console.log(`  ${i + 1}. [${t.provider}] ${t.quality} - ${t.size} - ${t.seeders} seeders`);
-      });
+      console.log(`[MULTI_TRACKER] Returning ${validTorrents.length} active torrents (size-filtered, sorted by seeders)`);
       return validTorrents;
     } else {
-      console.log(`[MULTI_TRACKER] All results had 0 seeders`);
+      console.log(`[MULTI_TRACKER] All results had 0 seeders or were oversized`);
       return [];
     }
     
@@ -1121,6 +1227,13 @@ async function findReplacementTorrent(title, year = '', imdbId = null, mediaType
           const seeders = parseInt(result.seeds) || parseInt(result.seeders) || 0;
           if (seeders <= 0) continue; // Dead torrent - skip it
 
+          // STRICT SIZE CAP: never offer a replacement larger than 3.5 GB
+          const sizeBytes = parseTorrentSizeBytes({ size: result.size });
+          if (sizeBytes !== null && sizeBytes > MAX_TORRENT_SIZE_BYTES) {
+            console.log(`[BROKEN_LINK_FIX]   skipping oversized "${result.title || '?'}" (${typeof result.size === 'number' ? formatFileSize(result.size) : result.size || 'Unknown size'})`);
+            continue;
+          }
+
           const dedupeKey = `${provider}:${result.desc || result.link || result.title}`;
           if (seen.has(dedupeKey)) continue;
           seen.add(dedupeKey);
@@ -1196,7 +1309,10 @@ async function searchMedia(title, type, year = '', imdbId = null, season = null,
   
   if (cachedTorrents !== null) {
     console.log(`[UNIFIED_SEARCH] Cache hit: ${cachedTorrents.length} torrents`);
-    return cachedTorrents;
+    // FINAL GATE: re-apply the strict 3.5 GB cap + seeders ranking even on
+    // cache hits — legacy cache entries may still contain oversized torrents
+    // from before this limit existed
+    return filterTorrentsBySizeAndSeeders(cachedTorrents, { limit: 4, source: 'CACHE' });
   }
   
   let torrents = [];
@@ -1209,6 +1325,9 @@ async function searchMedia(title, type, year = '', imdbId = null, season = null,
     try {
       torrents = await searchMovieTorrentsYTS(title, year, imdbId);
       if (torrents.length > 0) {
+        // FINAL GATE: strict 3.5 GB cap + seeders ranking before cache/frontend
+        torrents = filterTorrentsBySizeAndSeeders(torrents, { limit: 4, source: 'YTS' });
+        if (torrents.length === 0) throw new Error('all YTS results exceeded the 3.5 GB size cap');
         console.log(`[UNIFIED_SEARCH] SUCCESS from YTS: ${torrents.length} torrents`);
         setTorrentCache(cacheKey, year || 'any', torrents);
         return torrents;
@@ -1221,6 +1340,9 @@ async function searchMedia(title, type, year = '', imdbId = null, season = null,
     try {
       torrents = await searchMultiTrackerFallback(title, year, 'Video', 5);
       if (torrents.length > 0) {
+        // FINAL GATE: strict 3.5 GB cap + seeders ranking before cache/frontend
+        torrents = filterTorrentsBySizeAndSeeders(torrents, { limit: 4, source: 'MULTI_TRACKER' });
+        if (torrents.length === 0) throw new Error('all Multi-Tracker results exceeded the 3.5 GB size cap');
         console.log(`[UNIFIED_SEARCH] SUCCESS from Multi-Tracker: ${torrents.length} torrents`);
         setTorrentCache(cacheKey, year || 'any', torrents);
         return torrents;
@@ -1233,6 +1355,9 @@ async function searchMedia(title, type, year = '', imdbId = null, season = null,
     try {
       torrents = await searchTorrentsApibay(title, year);
       if (torrents.length > 0) {
+        // FINAL GATE: strict 3.5 GB cap + seeders ranking before cache/frontend
+        torrents = filterTorrentsBySizeAndSeeders(torrents, { limit: 4, source: 'APIBAY' });
+        if (torrents.length === 0) throw new Error('all Apibay results exceeded the 3.5 GB size cap');
         console.log(`[UNIFIED_SEARCH] SUCCESS from Apibay: ${torrents.length} torrents`);
         setTorrentCache(cacheKey, year || 'any', torrents);
         return torrents;
@@ -1249,6 +1374,9 @@ async function searchMedia(title, type, year = '', imdbId = null, season = null,
     try {
       torrents = await searchTVShowTorrentsEZTV(title, season, episode, imdbId);
       if (torrents.length > 0) {
+        // FINAL GATE: strict 3.5 GB cap + seeders ranking before cache/frontend
+        torrents = filterTorrentsBySizeAndSeeders(torrents, { limit: 4, source: 'EZTV' });
+        if (torrents.length === 0) throw new Error('all EZTV results exceeded the 3.5 GB size cap');
         console.log(`[UNIFIED_SEARCH] SUCCESS from EZTV: ${torrents.length} torrents`);
         setTorrentCache(cacheKey, year || 'any', torrents);
         return torrents;
@@ -1272,6 +1400,9 @@ async function searchMedia(title, type, year = '', imdbId = null, season = null,
       
       torrents = await searchMultiTrackerFallback(searchQuery, '', 'Video', 5);
       if (torrents.length > 0) {
+        // FINAL GATE: strict 3.5 GB cap + seeders ranking before cache/frontend
+        torrents = filterTorrentsBySizeAndSeeders(torrents, { limit: 4, source: 'MULTI_TRACKER' });
+        if (torrents.length === 0) throw new Error('all Multi-Tracker results exceeded the 3.5 GB size cap');
         console.log(`[UNIFIED_SEARCH] SUCCESS from Multi-Tracker: ${torrents.length} torrents`);
         setTorrentCache(cacheKey, year || 'any', torrents);
         return torrents;
@@ -1286,6 +1417,9 @@ async function searchMedia(title, type, year = '', imdbId = null, season = null,
       const tvSearchQuery = `${title} S${paddedSeason}`;
       torrents = await searchSeasonPacksApibay(tvSearchQuery, year);
       if (torrents.length > 0) {
+        // FINAL GATE: strict 3.5 GB cap + seeders ranking before cache/frontend
+        torrents = filterTorrentsBySizeAndSeeders(torrents, { limit: 4, source: 'APIBAY_SEASON' });
+        if (torrents.length === 0) throw new Error('all season packs exceeded the 3.5 GB size cap');
         console.log(`[UNIFIED_SEARCH] SUCCESS from Apibay: ${torrents.length} torrents`);
         setTorrentCache(cacheKey, year || 'any', torrents);
         return torrents;
@@ -1357,6 +1491,13 @@ async function searchTorrentsApibay(movieTitle, year) {
           return false;
         }
         
+        // STRICT SIZE CAP: completely ignore torrents larger than 3.5 GB —
+        // they take far too long to download and cache via Telegram
+        const sizeBytes = parseInt(torrent.size) || 0;
+        if (sizeBytes > MAX_TORRENT_SIZE_BYTES) {
+          return false;
+        }
+        
         return true;
       })
       .map(torrent => {
@@ -1372,6 +1513,7 @@ async function searchTorrentsApibay(movieTitle, year) {
             url: magnetLink,
             quality: quality,
             size: size,
+            sizeBytes: parseInt(torrent.size) || 0,
             type: 'magnet',
             seeders: parseInt(torrent.seeders) || 0,
             leechers: parseInt(torrent.leechers) || 0,
@@ -1393,11 +1535,11 @@ async function searchTorrentsApibay(movieTitle, year) {
       }
     });
 
-    // Convert back to array and sort by quality preference (2160p > 1080p > 720p > 480p > CAM > Unknown)
-    const qualityOrder = { '2160p': 1, '1080p': 2, '720p': 3, '480p': 4, 'CAM': 5, 'Unknown': 6 };
+    // Convert back to array and rank the size-filtered survivors by SEEDERS
+    // (highest first), then return up to 4
     const validTorrents = Object.values(qualityGroups)
-      .sort((a, b) => (qualityOrder[a.quality] || 99) - (qualityOrder[b.quality] || 99))
-      .slice(0, 4); // Return up to 4 unique qualities
+      .sort((a, b) => b.seeders - a.seeders)
+      .slice(0, 4);
 
     if (validTorrents.length > 0) {
       console.log(`[APIBAY] Found ${validTorrents.length} torrents for "${movieTitle}" (${year})`);
@@ -1696,6 +1838,12 @@ async function searchSeasonPacksApibay(showTitle, year) {
           return false;
         }
         
+        // STRICT SIZE CAP: completely ignore season packs larger than 3.5 GB
+        const sizeBytes = parseInt(torrent.size) || 0;
+        if (sizeBytes > MAX_TORRENT_SIZE_BYTES) {
+          return false;
+        }
+        
         return true;
       })
       .slice(0, 3)
@@ -1710,6 +1858,7 @@ async function searchSeasonPacksApibay(showTitle, year) {
             url: magnetLink,
             quality: quality,
             size: size,
+            sizeBytes: parseInt(torrent.size) || 0,
             type: 'magnet',
             seeders: parseInt(torrent.seeders) || 0,
             leechers: parseInt(torrent.leechers) || 0,
@@ -1720,7 +1869,8 @@ async function searchSeasonPacksApibay(showTitle, year) {
           return null;
         }
       })
-      .filter(Boolean);
+      .filter(Boolean)
+      .sort((a, b) => b.seeders - a.seeders); // highest seeders first
 
     if (validTorrents.length > 0) {
       console.log(`[APIBAY] Found ${validTorrents.length} season packs for "${showTitle}"`);
