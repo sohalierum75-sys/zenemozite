@@ -5,6 +5,7 @@ import { PrismaClient } from '@prisma/client';
 import TorrentSearchApi from 'torrent-search-api';
 import hybridCacheRoutes, { downloadRouter } from './storage/routes.js';
 import { fetchAndCacheMovies, createTMDBListFetcher } from './listCache.js';
+import { startWorker } from './storage/worker.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -2999,6 +3000,11 @@ app.get('*', (req, res) => {
 /**
  * Server Initialization
  */
+
+// Start the Telegram CDN background worker (picks up queued movies, downloads
+// torrents via WebTorrent, chunks + uploads to Telegram)
+startWorker();
+
 app.listen(PORT, () => {
   console.log('\n========================================');
   console.log('MovieStream Backend Server v12.0');
