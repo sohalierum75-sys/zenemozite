@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, ChevronDown, MessageSquare } from 'lucide-react';
-import WebtorModal from '../components/WebtorModal';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
@@ -16,7 +15,6 @@ const SingleTV = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showTrailer, setShowTrailer] = useState(false);
-  const [activeWebtorMagnet, setActiveWebtorMagnet] = useState(null);
   
   // Season/Episode state
   const [selectedSeason, setSelectedSeason] = useState(1);
@@ -527,25 +525,13 @@ const SingleTV = () => {
                                     </p>
                                   )}
                                   
-                                  {/* 2 Button Group - Cleaned Up */}
-                                  <div className="flex flex-col sm:flex-row gap-3 mt-4">
-                                    {/* 1. Watch Online - Dark Glassmorphism */}
-                                    <button
-                                      onClick={() => setActiveWebtorMagnet(torrent.url)}
-                                      className="flex-1 bg-[#252833]/80 backdrop-blur-md border border-white/10 text-white font-medium py-2 px-4 rounded-lg transition-all duration-300 flex items-center justify-center space-x-2 hover:bg-[#323644]/80 hover:border-white/20 text-sm active:scale-95"
-                                    >
-                                      <Play className="w-4 h-4" />
-                                      <span>Watch Online | ඔන්ලයින් නරඹන්න</span>
-                                    </button>
-
-                                    {/* 2. Direct Download - Solid Neon Orange */}
+                                  {/* Direct Download - Solid Neon Orange (streams from our CDN) */}
+                                  <div className="mt-3">
                                     <a
-                                      href={`https://webtor.io/show?magnet=${encodeURIComponent(torrent.url)}`}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="flex-1 bg-[#ff9900] text-[#0f1115] font-medium py-2 px-4 rounded-lg transition-all duration-300 flex items-center justify-center space-x-2 hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] text-sm active:scale-95"
+                                      href={`${API_BASE_URL}/download/${encodeURIComponent(`${tvShow?.title || 'Show'} - ${episode?.name || 'Episode'}`)}?dl=1&magnet=${encodeURIComponent(torrent.url)}`}
+                                      className="w-full bg-[#ff9900] text-[#0f1115] font-medium py-2 px-4 rounded-lg transition-all duration-300 flex items-center justify-center space-x-2 hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] text-sm active:scale-95"
                                     >
-                                      <ExternalLink className="w-4 h-4" />
+                                      <Download className="w-4 h-4" />
                                       <span>Direct Download | ඍජුවම බාගත කරන්න</span>
                                     </a>
                                   </div>
@@ -601,13 +587,6 @@ const SingleTV = () => {
         </div>
       </div>
 
-      {/* WebtorModal - Webtor.io Iframe Player */}
-      <WebtorModal
-        isOpen={activeWebtorMagnet !== null}
-        onClose={() => setActiveWebtorMagnet(null)}
-        magnetLink={activeWebtorMagnet || ''}
-        title={tvShow?.title ? `${tvShow.title} - Season ${selectedSeason}` : 'TV Show Player'}
-      />
     </div>
   );
 };

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, Search, MessageSquare } from 'lucide-react';
-import WebtorModal from '../components/WebtorModal';
 import ReportBrokenLink from '../components/ReportBrokenLink';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
@@ -15,7 +14,6 @@ const SingleMovie = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showTrailer, setShowTrailer] = useState(false);
-  const [activeWebtorMagnet, setActiveWebtorMagnet] = useState(null);
 
   useEffect(() => {
     if (id) {
@@ -103,9 +101,6 @@ const SingleMovie = () => {
         ? { ...prev, torrents: [newTorrent, ...(prev.torrents || [])] }
         : prev
     );
-
-    // Automatically resume the direct download generation with the new magnet
-    setActiveWebtorMagnet(newTorrent.url);
   };
 
   const hasTorrents = movie?.torrents && Array.isArray(movie.torrents) && movie.torrents.length > 0;
@@ -469,21 +464,15 @@ const SingleMovie = () => {
                             )}
                           </div>
 
-                          {/* 2 Button Group - Both use WebtorModal */}
-                          <div className="flex flex-col sm:flex-row gap-3 mt-4">
-                            {/* 1. Watch Online - Dark Glassmorphism */}
+                          {/* Download - Solid Neon Orange (streams from our CDN) */}
+                          <div className="mt-4">
                             <button
-                              onClick={() => setActiveWebtorMagnet(torrent.url)}
-                              className="flex-1 bg-[#252833]/80 backdrop-blur-md border border-white/10 text-white font-bold py-3 px-6 rounded-xl transition-all duration-300 flex items-center justify-center space-x-2 hover:bg-[#323644]/80 hover:border-white/20 hover:-translate-y-1 active:scale-95"
-                            >
-                              <Play className="w-5 h-5" />
-                              <span>Watch Online | ඔන්ලයින් නරඹන්න</span>
-                            </button>
-
-                            {/* 2. Download - Solid Neon Orange */}
-                            <button
-                              onClick={() => setActiveWebtorMagnet(torrent.url)}
-                              className="flex-1 bg-[#ff9900] text-[#0f1115] font-bold py-3 px-6 rounded-xl transition-all duration-300 flex items-center justify-center space-x-2 hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] hover:-translate-y-1 active:scale-95"
+                              onClick={() => {
+                                const params = new URLSearchParams({ dl: '1' });
+                                if (torrent.url) params.append('magnet', torrent.url);
+                                window.location.href = `${API_BASE_URL}/download/${encodeURIComponent(movie?.title || '')}?${params}`;
+                              }}
+                              className="w-full bg-[#ff9900] text-[#0f1115] font-bold py-3 px-6 rounded-xl transition-all duration-300 flex items-center justify-center space-x-2 hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] hover:-translate-y-1 active:scale-95"
                             >
                               <Download className="w-5 h-5" />
                               <span>Download | බාගත කරන්න</span>
@@ -508,10 +497,9 @@ const SingleMovie = () => {
                   <div className="mt-6 glass-card rounded-xl p-4">
                     <p className="text-[#8b94a6] text-sm leading-relaxed">
                       <strong className="text-white">How It Works:</strong><br />
-                      • Both buttons open Webtor.io player in a modal without leaving the site.<br />
-                      • <strong className="text-white">Watch Online:</strong> Stream directly in your browser.<br />
-                      • <strong className="text-[#ff9900]">Download:</strong> Download files through Webtor.io gateway.<br />
-                      • Press <kbd className="bg-white/10 px-2 py-1 rounded text-white">ESC</kbd> or click the X button to close the player.
+                      • Click <strong className="text-[#ff9900]">Download</strong> and the file streams directly from our CDN to your browser as one continuous file.<br />
+                      • Large movies are automatically split and reassembled — you get a single playable file.<br />
+                      • First-time downloads may take a moment while we prepare the file.
                     </p>
                   </div>
                 </div>
@@ -553,14 +541,6 @@ const SingleMovie = () => {
 
       {/* Bottom Spacing */}
       <div className="h-20" />
-
-      {/* WebtorModal - Webtor.io Iframe Player */}
-      <WebtorModal
-        isOpen={activeWebtorMagnet !== null}
-        onClose={() => setActiveWebtorMagnet(null)}
-        magnetLink={activeWebtorMagnet || ''}
-        title={movie?.title || 'Movie Player'}
-      />
     </div>
   );
 };
