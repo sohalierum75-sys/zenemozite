@@ -13,6 +13,58 @@ import { splitAndUpload, spoolToTemp } from './chunker.js';
 // Movie ids that currently have an upload in flight (prevents duplicate jobs)
 const processing = new Set();
 
+// Values that must NEVER be persisted as a movie title
+const INVALID_TITLE_VALUES = new Set(['', 'unknown', 'unknown title', 'null', 'undefined', 'n/a', 'na']);
+
+/** Extract the `dn=` (display/release name) parameter from a magnet link, if present. */
+function extractMagnetDn(magnetLink) {
+  if (!magnetLink || typeof magnetLink !== 'string') return null;
+  try {
+    const dnMatch = magnetLink.match(/[?&]dn=([^&]+)/);
+    if (dnMatch && dnMatch[1]) {
+      const dn = decodeURIComponent(dnMatch[1].replace(/\+/g, ' ')).trim();
+      if (dn) return dn;
+    }
+  } catch {
+    // malformed magnet — ignore, caller will use its own fallback
+  }
+  return null;
+}
+
+/** Derive a readable label from the magnet info hash, e.g. "Torrent a1b2c3d4e5f6". */
+function extractMagnetHashLabel(magnetLink) {
+  if (!magnetLink || typeof magnetLink !== 'string') return null;
+  const hashMatch = magnetLink.match(/xt=urn:btih:([a-fA-F0-9]{8,64})/);
+  return hashMatch ? `Torrent ${hashMatch[1].slice(0, 12)}` : null;
+}
+
+/**
+ * Strictly validate a title for the CDN queue. Falls back through:
+ *   explicit title -> magnet display name (dn=) -> caller-provided fallback
+ *   (search query / idOrTitle) -> magnet info-hash label
+ * and guarantees the stored title is NEVER empty or "Unknown Title".
+ * Returns { title, source } so the caller can log where the title came from.
+ */
+function resolveQueueTitle({ title, magnetLink, fallbackTitle } = {}) {
+  const candidates = [
+    { value: title, source: 'query' },
+    { value: extractMagnetDn(magnetLink), source: 'magnet-dn' },
+    { value: fallbackTitle, source: 'fallback' },
+    { value: extractMagnetHashLabel(magnetLink), source: 'hash' },
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate.value !== 'string') continue;
+    const cleaned = candidate.value.replace(/\s+/g, ' ').trim();
+    if (!INVALID_TITLE_VALUES.has(cleaned.toLowerCase())) {
+      return { title: cleaned, source: candidate.source };
+    }
+  }
+
+  // Absolute last resort — still a real, non-"Unknown" identifier
+  return { title: 'Uncategorized Download', source: 'none' };
+}
+
 function assertConfigured() {
   if (!config.telegram.configured) {
     throw Object.assign(
@@ -27,13 +79,23 @@ function assertConfigured() {
  * Creates (or updates) the Movie row and stores the magnet so the
  * torrent-to-stream pipeline can pick the job up.
  */
-export async function cacheMovie({ movieId, title, magnetLink, size, fileName } = {}) {
+export async function cacheMovie({ movieId, title, magnetLink, size, fileName, fallbackTitle } = {}) {
   if (!movieId && !title && !magnetLink) {
     throw Object.assign(
       new Error('cacheMovie requires at least one of: movieId, title, magnetLink'),
       { statusCode: 400 }
     );
   }
+
+  // STRICT TITLE VALIDATION — never persist "Unknown Title".
+  // Falls back to the magnet display name (dn=), then the caller-provided
+  // search query / idOrTitle, and logs exactly what is being queued.
+  const resolved = resolveQueueTitle({ title, magnetLink, fallbackTitle });
+  title = resolved.title;
+
+  console.log(`[CDN_QUEUE] Queuing movie for caching:`);
+  console.log(`[CDN_QUEUE]   title  = "${title}" (source: ${resolved.source})`);
+  console.log(`[CDN_QUEUE]   magnet = ${magnetLink ? 'present' : 'none'} | explicit movieId = ${movieId || 'none'}`);
 
   let movie = null;
   if (movieId) {
@@ -46,23 +108,29 @@ export async function cacheMovie({ movieId, title, magnetLink, size, fileName } 
   if (!movie) {
     movie = await prisma.movie.create({
       data: {
-        title: title || 'Unknown Title',
+        title,
         sizeBytes: Number(size) || null,
         fileName: fileName || null,
         magnetLink: magnetLink || null,
         status: 'queued',
       },
     });
-    console.log(`[CDN] Queued "${movie.title}" for caching (movieId ${movie.id})`);
+    console.log(`[CDN_QUEUE] Created Movie row "${movie.title}" (status: queued, id: ${movie.id})`);
     return movie;
   }
 
+  // Existing row: repair a previously bad title (e.g. legacy "Unknown Title")
+  // when we now have a real one, and keep the magnet fresh.
   const updates = {};
   if (magnetLink && movie.magnetLink !== magnetLink) updates.magnetLink = magnetLink;
+  if (title && movie.title !== title && INVALID_TITLE_VALUES.has((movie.title || '').toLowerCase())) {
+    updates.title = title;
+  }
   if (movie.status === 'pending') updates.status = 'queued';
   if (Object.keys(updates).length > 0) {
     movie = await prisma.movie.update({ where: { id: movie.id }, data: updates });
   }
+  console.log(`[CDN_QUEUE] Re-queued existing Movie row "${movie.title}" (status: ${movie.status}, id: ${movie.id})`);
   return movie;
 }
 

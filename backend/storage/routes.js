@@ -76,7 +76,8 @@ async function handleDownload(req, res) {
           message: 'Movie not found. Provide ?magnet= (and optionally ?title=) to queue it for caching.',
         });
       }
-      const movie = await cacheMovie({ title, magnetLink });
+      console.log(`[CDN_API] Queueing new download request: key="${idOrTitle}" | ?title="${title || 'none'}" | magnet=${magnetLink ? 'present' : 'none'}`);
+      const movie = await cacheMovie({ title, magnetLink, fallbackTitle: idOrTitle });
       return res.status(202).json({
         success: true,
         cached: false,

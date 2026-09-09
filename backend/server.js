@@ -327,6 +327,30 @@ const TMDB_BACKDROP_BASE = 'https://image.tmdb.org/t/p/original';
 // YTS API Configuration (Primary source for Movies)
 const YTS_BASE_URL = 'https://yts.mx/api/v2';
 
+// YTS circuit breaker: when yts.mx is unreachable (DNS failure, timeout, etc.)
+// skip it entirely for this window so requests fall back to Multi-Tracker /
+// Apibay IMMEDIATELY instead of waiting for another 10s timeout per request.
+const YTS_RETRY_AFTER_MS = 5 * 60 * 1000; // retry YTS every 5 minutes
+let ytsUnavailableUntil = 0;
+
+// Network/DNS error codes that mean "the host itself is unreachable"
+const NETWORK_ERROR_CODES = new Set([
+  'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'ECONNREFUSED',
+  'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH', 'EPROTO',
+]);
+
+function isYtsUnavailable() {
+  return Date.now() < ytsUnavailableUntil;
+}
+
+function markYtsUnavailable(error) {
+  const code = error?.code || 'UNKNOWN';
+  if (NETWORK_ERROR_CODES.has(code)) {
+    ytsUnavailableUntil = Date.now() + YTS_RETRY_AFTER_MS;
+    console.error(`[YTS ERROR] yts.mx unreachable (${code}) — skipping YTS and relying solely on Multi-Tracker / Apibay for the next ${YTS_RETRY_AFTER_MS / 60000} minutes`);
+  }
+}
+
 // EZTV API Configuration (Primary source for TV Shows)
 const EZTV_BASE_URL = 'https://eztvx.to/api';
 
@@ -538,6 +562,13 @@ function sanitizeTvTitle(title) {
  * Returns high-quality movie torrents with proper metadata
  */
 async function searchMovieTorrentsYTS(movieTitle, year, imdbId = null) {
+  // Circuit breaker: if yts.mx recently failed at the network level, skip it
+  // immediately (no 10s timeout wait) and let the caller use its fallbacks.
+  if (isYtsUnavailable()) {
+    console.log(`[YTS] Skipped (unreachable in recent attempts, circuit breaker active) — using Multi-Tracker / Apibay for "${movieTitle}"`);
+    return [];
+  }
+
   try {
     const cleanedTitle = cleanTitleForSearch(movieTitle);
     console.log(`[YTS] Searching for movie: "${cleanedTitle}" (${year})`);
@@ -608,7 +639,15 @@ async function searchMovieTorrentsYTS(movieTitle, year, imdbId = null) {
     
     return torrents;
   } catch (error) {
-    console.error(`[YTS ERROR] Failed to search "${movieTitle}":`, error.message);
+    // DNS/network-level failures (getaddrinfo ENOTFOUND, timeouts, ...) must
+    // NEVER propagate as unhandled exceptions — log them, trip the circuit
+    // breaker so subsequent requests skip YTS instantly, and return [] so the
+    // unified search falls straight through to Multi-Tracker / Apibay.
+    if (error?.code && NETWORK_ERROR_CODES.has(error.code)) {
+      markYtsUnavailable(error);
+    } else {
+      console.error(`[YTS ERROR] Failed to search "${movieTitle}":`, error.message);
+    }
     return [];
   }
 }
@@ -954,17 +993,31 @@ async function persistReplacementTorrent({ movieId, title, year, imdbId, mediaTy
     return updated;
   }
 
+  // Strict title validation — never persist "Unknown Title".
+  // Fallback chain: reported title -> torrent release name -> imdb id -> info hash.
+  const candidateTitles = [
+    title,
+    typeof torrent?.name === 'string'
+      ? torrent.name.replace(/\.[a-z0-9]{2,4}$/i, '').replace(/[.\-_]+/g, ' ').replace(/\[[^\]]*\]|\([^)]*\)/g, '').replace(/\s+/g, ' ').trim()
+      : null,
+    imdbId ? `Media ${imdbId}` : null,
+    newInfoHash ? `Torrent ${newInfoHash.slice(0, 12)}` : null,
+  ];
+  const resolvedTitle = candidateTitles.find(
+    (t) => typeof t === 'string' && t.trim() && !['unknown', 'unknown title', 'null', 'undefined'].includes(t.trim().toLowerCase())
+  ) || 'Uncategorized Download';
+
   const created = await prisma.mediaCache.create({
     data: {
       tmdbId: movieId ? String(movieId) : `report_${newInfoHash || Date.now()}`,
       mediaType: mediaType === 'tv' ? 'tv' : 'movie',
       imdbId: imdbId || null,
-      title: title || 'Unknown Title',
+      title: resolvedTitle,
       year: year ? String(year) : null,
       torrents: JSON.stringify([torrent])
     }
   });
-  console.log(`[BROKEN_LINK_FIX] Created database record for "${created.title}" with the new magnet`);
+  console.log(`[BROKEN_LINK_FIX] Created database record for "${created.title}" (title source: ${resolvedTitle === title ? 'reported' : 'fallback'}) with the new magnet`);
   invalidateCachesForMedia(created.title, created.tmdbId);
   return created;
 }
@@ -2901,7 +2954,8 @@ app.get('/api/status', (req, res) => {
     },
     features: {
       tmdbApiConfigured: TMDB_API_KEY !== 'your_api_key_here',
-      ytsApi: true,
+      ytsApi: !isYtsUnavailable(),
+      ytsCircuitBreakerActive: isYtsUnavailable(),
       eztvApi: true,
       multiSourceFallback: true,
       torrentGalaxy: enabledProviders.includes('TorrentGalaxy'),
