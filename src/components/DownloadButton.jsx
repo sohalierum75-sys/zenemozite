@@ -4,37 +4,26 @@ import { Download, Loader2, AlertCircle, RotateCcw } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
-// While the backend caches the movie (Telegram / Google Drive) we poll this often
 const POLL_INTERVAL_MS = 5000;
-// Give up waiting after 10 minutes and show an error with a retry button
-const MAX_WAIT_MS = 10 * 60 * 1000;
+const MAX_WAIT_MS = 15 * 60 * 1000; // 15 min (generous for multi-chunk uploads)
 
 /**
- * Hybrid-cache Download Button.
+ * Hybrid CDN Download Button with polling.
  *
- * Flow (GET /api/download/:movieId):
- *   1. Movie already cached  -> { success: true, downloadUrl }  -> auto-redirect via
- *      window.location.href - no extra clicks.
- *   2. Movie not cached yet  -> { success: true, cached: false } -> keeps a
- *      "Processing..." state and polls the same endpoint every 5s until the
- *      backend finishes caching, then redirects.
- *   3. Anything fails        -> inline red error with a Try Again button.
- *
- * Props:
- *   movieId    (required) Movie.id from the cache database, or any title the DB knows.
- *   magnetLink (optional) magnet of the movie - lets the backend queue caching
- *              on demand the first time an uncached movie is requested.
- *   label      (optional) button text.
- *   className  (optional) extra Tailwind classes for the button.
+ * Click -> GET /api/download/:movieId (with ?magnet= to queue uncached movies)
+ *   cached (downloadUrl present)  -> redirect via window.location.href
+ *   state: "queued" or "caching"  -> "Downloading to server..." + poll every 5s
+ *   state: "failed"               -> error immediately, stop polling
+ *   error / timeout               -> error with Try Again
  */
 const DownloadButton = ({ movieId, magnetLink, label = 'Download', className = '' }) => {
   const [status, setStatus] = useState('idle'); // idle | processing | error
   const [message, setMessage] = useState('');
+  const [detail, setDetail] = useState(''); // elapsed time / status line
   const pollTimerRef = useRef(null);
   const startedAtRef = useRef(0);
   const abortedRef = useRef(false);
 
-  // Clean up any running poll timer when the component unmounts
   useEffect(() => {
     return () => {
       abortedRef.current = true;
@@ -48,70 +37,85 @@ const DownloadButton = ({ movieId, magnetLink, label = 'Download', className = '
     return `${API_BASE_URL}/download/${encodeURIComponent(movieId)}${params.toString() ? `?${params}` : ''}`;
   };
 
-  const requestLink = async () => {
-    const { data } = await axios.get(buildUrl(), { timeout: 30000 });
-    return data;
+  const fail = (msg) => {
+    if (abortedRef.current) return;
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+    setStatus('error');
+    setMessage(msg);
   };
 
-  // Requirement: once the backend returns downloadUrl, auto-redirect
   const redirect = (url) => {
     if (abortedRef.current) return;
-    console.log('[DownloadButton] Redirecting to', url);
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     window.location.href = url;
   };
 
+  const formatElapsed = (ms) => {
+    const totalSec = Math.floor(ms / 1000);
+    return `${Math.floor(totalSec / 60)}:${String(totalSec % 60).padStart(2, '0')}`;
+  };
+
+    // ---- Poll: called immediately on click, then every POLL_INTERVAL_MS
   const handlePoll = async () => {
     if (abortedRef.current) return;
 
-    // Give up after MAX_WAIT_MS
-    if (Date.now() - startedAtRef.current > MAX_WAIT_MS) {
-      setStatus('error');
-      setMessage('Caching is taking too long. Please try again later.');
+    const elapsed = Date.now() - startedAtRef.current;
+    const elapsedStr = formatElapsed(elapsed);
+
+    if (elapsed > MAX_WAIT_MS) {
+      fail(`Caching timed out after ${formatElapsed(MAX_WAIT_MS)}. Please try again later.`);
       return;
     }
 
     try {
-      const data = await requestLink();
+      const { data } = await axios.get(buildUrl(), { timeout: 30000 });
 
       if (!data?.success) {
         throw new Error(data?.message || 'The backend rejected the request.');
       }
 
-      // Cached -> redirect immediately
+      // ---- CACHED: downloadUrl present -> redirect (requirement 5)
       if (data.downloadUrl) {
         redirect(data.downloadUrl);
         return;
       }
 
-      // Still caching -> schedule the next poll
-      setMessage(data.message || 'Preparing your download...');
+      // ---- FAILED: stop polling immediately (requirement 6)
+      if (data.state === 'failed') {
+        fail('Caching failed on the server. Click Try Again to re-initiate.');
+        return;
+      }
+
+      // ---- IN PROGRESS: queued or caching -> update UI + poll again (requirement 3)
+      if (data.state === 'caching') {
+        setMessage('Downloading to server...');
+        setDetail(`Splitting & uploading to CDN · ${elapsedStr}`);
+      } else if (data.state === 'queued') {
+        setMessage('Queued for caching...');
+        setDetail(`Waiting for a slot · ${elapsedStr}`);
+      } else {
+        setMessage('Preparing your download...');
+        setDetail(`Elapsed ${elapsedStr}`);
+      }
+
       pollTimerRef.current = setTimeout(handlePoll, POLL_INTERVAL_MS);
     } catch (err) {
       if (abortedRef.current) return;
-      const msg =
-        err?.response?.data?.message ||
-        err?.message ||
-        'Failed to reach the download server.';
-      setStatus('error');
-      setMessage(msg);
+      fail(err?.response?.data?.message || err?.message || 'Failed to reach the download server.');
     }
   };
 
-  const handleClick = async () => {
+  const handleClick = () => {
     if (!movieId || status === 'processing') return;
-
     abortedRef.current = false;
     setStatus('processing');
     setMessage('Processing...');
+    setDetail('');
     startedAtRef.current = Date.now();
-
-    // Kick off the first request immediately (no initial delay)
-    await handlePoll();
+    handlePoll();
   };
 
-  const handleRetry = () => handleClick();
-
-  // ----------------- IDLE -----------------
+    // ---- Render: IDLE
   if (status === 'idle') {
     return (
       <button
@@ -125,17 +129,22 @@ const DownloadButton = ({ movieId, magnetLink, label = 'Download', className = '
     );
   }
 
-  // ----------------- PROCESSING -----------------
+  // ---- Render: PROCESSING (with progress detail line)
   if (status === 'processing') {
     return (
-      <div className="flex-1 inline-flex items-center justify-center space-x-2 font-bold py-3 px-6 rounded-xl bg-[#252833]/80 border border-white/10 text-white">
-        <Loader2 className="w-5 h-5 animate-spin text-[var(--accent)]" />
-        <span className="truncate">{message || 'Processing...'}</span>
+      <div className="flex-1 flex flex-col items-stretch">
+        <div className="inline-flex items-center justify-center space-x-2 font-bold py-3 px-6 rounded-xl bg-[#252833]/80 border border-white/10 text-white">
+          <Loader2 className="w-5 h-5 animate-spin text-[var(--accent)]" />
+          <span className="truncate">{message || 'Processing...'}</span>
+        </div>
+        {detail && (
+          <p className="text-[#8b94a6] text-xs mt-1.5 text-center">{detail}</p>
+        )}
       </div>
     );
   }
 
-  // ----------------- ERROR -----------------
+  // ---- Render: ERROR (with Try Again)
   return (
     <div className="flex-1 flex flex-col items-stretch gap-2">
       <div className="inline-flex items-center justify-center space-x-2 font-bold py-3 px-6 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400">
@@ -143,7 +152,7 @@ const DownloadButton = ({ movieId, magnetLink, label = 'Download', className = '
         <span className="truncate text-sm">{message}</span>
       </div>
       <button
-        onClick={handleRetry}
+        onClick={handleClick}
         className="inline-flex items-center justify-center space-x-2 text-sm text-[#8b94a6] hover:text-white transition-colors"
       >
         <RotateCcw className="w-4 h-4" />
