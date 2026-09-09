@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, Search, MessageSquare } from 'lucide-react';
 import ReportBrokenLink from '../components/ReportBrokenLink';
+import DownloadButton from '../components/DownloadButton';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
@@ -464,19 +465,17 @@ const SingleMovie = () => {
                             )}
                           </div>
 
-                          {/* Download - Solid Neon Orange (streams from our CDN) */}
+                          {/* Download - polls the CDN cache: shows progress while the
+                              backend queues/caches the movie, auto-triggers the
+                              download the moment the file is ready */}
                           <div className="mt-4">
-                            <button
-                              onClick={() => {
-                                const params = new URLSearchParams({ dl: '1' });
-                                if (torrent.url) params.append('magnet', torrent.url);
-                                window.location.href = `${API_BASE_URL}/download/${encodeURIComponent(movie?.title || '')}?${params}`;
-                              }}
-                              className="w-full bg-[#ff9900] text-[#0f1115] font-bold py-3 px-6 rounded-xl transition-all duration-300 flex items-center justify-center space-x-2 hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] hover:-translate-y-1 active:scale-95"
-                            >
-                              <Download className="w-5 h-5" />
-                              <span>Download | බාගත කරන්න</span>
-                            </button>
+                            <DownloadButton
+                              movieId={movie?.title}
+                              title={movie?.title}
+                              magnetLink={torrent.url}
+                              label="Download | බාගත කරන්න"
+                              className="w-full bg-[#ff9900] text-[#0f1115] hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] hover:-translate-y-1"
+                            />
                           </div>
                         </div>
                       );
