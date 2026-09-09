@@ -80,6 +80,10 @@ COPY --chown=nodejs:nodejs backend/storage ./backend/storage/
 COPY --chown=nodejs:nodejs backend/prisma/schema.prisma backend/prisma/client.js ./backend/prisma/
 COPY --chown=nodejs:nodejs backend/package*.json ./backend/
 
+# Copy entrypoint script (runs prisma db push before starting node)
+COPY --chown=nodejs:nodejs backend/entrypoint.sh ./backend/entrypoint.sh
+RUN chmod +x ./backend/entrypoint.sh
+
 # Copy frontend build output
 COPY --from=frontend-builder --chown=nodejs:nodejs /app/dist ./frontend/dist
 
@@ -104,5 +108,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
 
-# Start backend server
-CMD ["node", "backend/server.js"]
+# Start: sync Prisma schema to SQLite, then start Express server
+CMD ["./backend/entrypoint.sh"]
