@@ -67,8 +67,19 @@ model Movie {
   createdAt        DateTime     @default(now())
   chunks           MovieChunk[]
 
+  // --- TMDB metadata (auto-saved when movie lists are fetched & cached) ---
+  tmdbId           Int?         // TMDB movie ID — unique key for upsert
+  posterPath       String?      // TMDB poster path (for frontend display)
+  backdropPath     String?      // TMDB backdrop path (for hero banners)
+  voteAverage      Float?       // TMDB rating (0-10)
+  releaseDate      String?      // release year (e.g. "2024")
+  popularity       Float?       // TMDB popularity score (for sorting)
+  genreIds         String?      // JSON array of TMDB genre IDs (e.g. '[28,12,16]')
+
+  @@unique([tmdbId])
   @@index([status])
   @@index([lastDownloadedAt])
+  @@index([popularity])
 }
 
 model MovieChunk {

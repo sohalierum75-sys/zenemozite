@@ -4,6 +4,7 @@ import cors from 'cors';
 import { PrismaClient } from '@prisma/client';
 import TorrentSearchApi from 'torrent-search-api';
 import hybridCacheRoutes, { downloadRouter } from './storage/routes.js';
+import { fetchAndCacheMovies, createTMDBListFetcher } from './listCache.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -1867,6 +1868,100 @@ app.get('/api/movies', async (req, res) => {
       source: 'Mock Data (endpoint error)',
       data: MOCK_MOVIES
     });
+  }
+});
+
+// ==============================================================================
+// TMDB List Cache — Popular, Trending, Top Rated, Category
+// Uses the reusable fetchAndCacheMovies() from listCache.js:
+//   Local Prisma DB first → TMDB fallback → auto-save to Movie + ListCache
+// ==============================================================================
+
+const tmdbConfig = {
+  TMDB_BASE_URL,
+  TMDB_API_KEY,
+  TMDB_IMAGE_BASE,
+  TMDB_BACKDROP_BASE,
+};
+
+const fetchPopular = createTMDBListFetcher('/discover/movie',
+  { sort_by: 'popularity.desc', 'vote_count.gte': 50 },
+  tmdbConfig
+);
+
+const fetchTrending = createTMDBListFetcher('/trending/movie/week', {}, tmdbConfig);
+
+const fetchTopRated = createTMDBListFetcher('/discover/movie',
+  { sort_by: 'vote_average.desc', 'vote_count.gte': 100 },
+  tmdbConfig
+);
+
+// GET /api/movies/popular
+app.get('/api/movies/popular', async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  try {
+    const result = await fetchAndCacheMovies({
+      cacheKey: `popular_page${page}`,
+      fetchFn: () => fetchPopular(page),
+      ttlHours: 6,
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('[API ERROR] Popular movies:', err.message);
+    res.json({ success: true, source: 'Error', data: [] });
+  }
+});
+
+// GET /api/movies/trending
+app.get('/api/movies/trending', async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  try {
+    const result = await fetchAndCacheMovies({
+      cacheKey: `trending_page${page}`,
+      fetchFn: () => fetchTrending(page),
+      ttlHours: 4, // trending changes faster
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('[API ERROR] Trending movies:', err.message);
+    res.json({ success: true, source: 'Error', data: [] });
+  }
+});
+
+// GET /api/movies/top-rated
+app.get('/api/movies/top-rated', async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  try {
+    const result = await fetchAndCacheMovies({
+      cacheKey: `top_rated_page${page}`,
+      fetchFn: () => fetchTopRated(page),
+      ttlHours: 12, // top rated changes slowly
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('[API ERROR] Top rated movies:', err.message);
+    res.json({ success: true, source: 'Error', data: [] });
+  }
+});
+
+// GET /api/movies/category/:id — TMDB genre browse (e.g. 28=Action, 35=Comedy)
+app.get('/api/movies/category/:id', async (req, res) => {
+  const genreId = req.params.id;
+  const page = parseInt(req.query.page) || 1;
+  try {
+    const fetchCategory = createTMDBListFetcher('/discover/movie',
+      { with_genres: genreId, sort_by: 'popularity.desc', 'vote_count.gte': 20 },
+      tmdbConfig
+    );
+    const result = await fetchAndCacheMovies({
+      cacheKey: `category_${genreId}_page${page}`,
+      fetchFn: () => fetchCategory(page),
+      ttlHours: 6,
+    });
+    res.json(result);
+  } catch (err) {
+    console.error(`[API ERROR] Category ${genreId} movies:`, err.message);
+    res.json({ success: true, source: 'Error', data: [] });
   }
 });
 
