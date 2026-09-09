@@ -9,6 +9,7 @@ import prisma from '../prisma/client.js';
 import { config, formatBytes } from './config.js';
 import * as telegramStore from './telegramStore.js';
 import { splitAndUpload, spoolToTemp } from './chunker.js';
+import { destroyTorrentByMagnet } from './worker.js';
 
 // Movie ids that currently have an upload in flight (prevents duplicate jobs)
 const processing = new Set();
@@ -132,6 +133,75 @@ export async function cacheMovie({ movieId, title, magnetLink, size, fileName, f
   }
   console.log(`[CDN_QUEUE] Re-queued existing Movie row "${movie.title}" (status: ${movie.status}, id: ${movie.id})`);
   return movie;
+}
+
+/**
+ * FORCE RESET for "Try Again": clear a stuck/failed download so a fresh one
+ * can start immediately.
+ *   - destroys any live/stuck torrent instance for this movie's magnet
+ *   - resets status to 'queued' (from 'failed' or stuck 'queued')
+ *   - stores/refreshes the magnet link and clears the last error
+ *   - sets lastDownloadedAt to the epoch so the worker's poll
+ *     (orderBy lastDownloadedAt asc) picks this movie up FIRST
+ * Returns the updated movie, or null if no row exists yet (caller should
+ * fall through to the normal queue path).
+ */
+export async function resetMovieForRetry({ movieId, title, magnetLink, fallbackTitle } = {}) {
+  const resolved = resolveQueueTitle({ title, magnetLink, fallbackTitle });
+
+  let movie = null;
+  if (movieId) {
+    movie = await prisma.movie.findUnique({ where: { id: movieId } }).catch(() => null);
+  }
+  if (!movie && resolved.title) {
+    movie = await prisma.movie.findFirst({ where: { title: resolved.title } });
+  }
+  if (!movie) return null;
+
+  console.log(`[CDN_RETRY] Force reset requested for "${movie.title}" (current status: ${movie.status})`);
+
+  // 1. Kill any stuck torrent instance so the retry starts from scratch.
+  //    CRITICAL: WebTorrent dedupes client.add() by infoHash, so a live
+  //    stuck instance left over from a failed attempt would silently
+  //    swallow the retry download and "Try Again" would appear to do
+  //    nothing. Destroying it first guarantees a fresh download.
+  const magnet = magnetLink || movie.magnetLink;
+  if (magnet) {
+    const killed = destroyTorrentByMagnet(magnet);
+    console.log(`[CDN_RETRY]   stuck torrent instance: ${killed ? 'destroyed' : 'none was live'}`);
+  }
+
+  // 2. Re-read the row: "Try Again" can race with the worker finishing the
+  //    job. NEVER clobber a row that is now 'ready' (download just completed)
+  //    or actively 'caching' (download in progress) — resetting those would
+  //    throw away a finished/working download.
+  const fresh = await prisma.movie.findUnique({ where: { id: movie.id } });
+  if (!fresh || fresh.status === 'ready' || fresh.status === 'caching') {
+    console.log(`[CDN_RETRY]   row is now '${fresh ? fresh.status : 'deleted'}' — leaving it untouched`);
+    return fresh || null;
+  }
+
+  // 3. Reset ONLY retryable states ('failed' | 'queued' | 'pending') via a
+  //    conditional updateMany — a second race-safe guard against clobbering
+  //    a state that changed between the read above and this write.
+  const updated = await prisma.movie.updateMany({
+    where: { id: movie.id, status: { in: ['failed', 'queued', 'pending'] } },
+    data: {
+      status: 'queued',
+      lastError: null,
+      ...(magnet ? { magnetLink: magnet } : {}),
+      lastDownloadedAt: new Date(0), // epoch -> worker poll picks this movie FIRST
+    },
+  });
+
+  if (updated.count === 0) {
+    console.log(`[CDN_RETRY]   status changed mid-reset — re-reading row without modifying it`);
+    return prisma.movie.findUnique({ where: { id: movie.id } });
+  }
+
+  const resetMovie = await prisma.movie.findUnique({ where: { id: movie.id } });
+  console.log(`[CDN_RETRY]   status reset to 'queued' — worker will pick it up on the next poll (≤30s)`);
+  return resetMovie;
 }
 
 /**

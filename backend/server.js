@@ -3056,8 +3056,13 @@ app.get('*', (req, res) => {
  */
 
 // Start the Telegram CDN background worker (picks up queued movies, downloads
-// torrents via WebTorrent, chunks + uploads to Telegram)
-startWorker();
+// torrents via WebTorrent, chunks + uploads to Telegram). Guarded: a broken
+// CDN/torrent stack must never prevent the HTTP server from listening.
+try {
+  startWorker();
+} catch (err) {
+  console.error('[SERVER] CDN background worker failed to start (API server continues):', err && err.message);
+}
 
 app.listen(PORT, () => {
   console.log('\n========================================');

@@ -14,7 +14,7 @@
 import { pipeline } from 'stream/promises';
 import express from 'express';
 import prisma from '../prisma/client.js';
-import { startCacheJob, peekCacheEntry, getCacheStats, cacheMovie } from './hybridCache.js';
+import { startCacheJob, peekCacheEntry, getCacheStats, cacheMovie, resetMovieForRetry } from './hybridCache.js';
 import { createChunkStream } from './chunker.js';
 import { formatBytes } from './config.js';
 
@@ -91,13 +91,44 @@ async function handleDownload(req, res) {
 
     const { movie } = entry;
 
-    // ---- Touch the download timestamp (on every request)
-    await prisma.movie.update({
-      where: { id: movie.id },
-      data: { lastDownloadedAt: new Date() },
-    });
+    // ---- FORCE RESET ON RETRY: a failed, stuck-queued, or never-started
+    // ('pending') movie must requeue immediately when the user clicks
+    // "Try Again" — otherwise the endpoint would keep returning the same
+    // stuck state forever. ('pending' rows are NEVER picked up by the worker,
+    // which only scans 'queued' — without this they hang indefinitely.)
+    if (['failed', 'queued', 'pending'].includes(movie.status)) {
+      const previousError = movie.lastError || null;
+      const reset = await resetMovieForRetry({ movieId: movie.id, title, magnetLink, fallbackTitle: idOrTitle });
+      if (reset) {
+        return res.status(202).json({
+          success: true,
+          cached: false,
+          downloadUrl: null,
+          state: 'queued',
+          movieId: reset.id,
+          title: reset.title,
+          message: previousError
+            ? `Previous attempt failed (${previousError}). A fresh download has been queued — retrying now.`
+            : 'Download re-queued — a fresh attempt is starting now. Poll this endpoint.',
+        });
+      }
+      // reset returned null (row vanished) — fall through and queue fresh below
+      console.log(`[CDN_API] Reset found no row for key="${idOrTitle}" — queueing fresh`);
+      const fresh = await cacheMovie({ title, magnetLink, fallbackTitle: idOrTitle });
+      return res.status(202).json({
+        success: true,
+        cached: false,
+        downloadUrl: null,
+        state: 'queued',
+        movieId: fresh.id,
+        title: fresh.title,
+        message: 'Movie queued for caching. Poll this endpoint — downloadUrl appears once cached.',
+      });
+    }
 
-    // ---- Not ready yet: tell the client to keep polling
+    // ---- Actively downloading: keep the queue priority untouched and let the
+    // client keep polling. (Touching lastDownloadedAt here would demote the
+    // movie to the back of the worker's oldest-first queue.)
     if (!entry.cached) {
       return res.status(202).json({
         success: true,
@@ -106,15 +137,18 @@ async function handleDownload(req, res) {
         state: movie.status,
         movieId: movie.id,
         title: movie.title,
-        message: movie.status === 'caching'
-          ? 'Caching in progress. Poll again shortly.'
-          : movie.status === 'failed'
-            ? 'Caching failed. Re-initiate to retry.'
-            : 'Movie queued for caching.',
+        message: 'Caching in progress. Poll again shortly.',
       });
     }
 
     // ---- Movie is READY
+    // Touch the download timestamp (only for real downloads — this keeps the
+    // worker's oldest-first queue ordering meaningful)
+    await prisma.movie.update({
+      where: { id: movie.id },
+      data: { lastDownloadedAt: new Date() },
+    });
+
     const fileName = movie.fileName || `${movie.title}.mp4`;
 
     if (isStreamMode) {

@@ -68,6 +68,7 @@ model Movie {
   mimeType         String?      // e.g. "video/mp4"
   magnetLink       String?      // magnet URI — stored when queued for the torrent worker
   status           String       @default("pending") // pending | queued | caching | ready | failed
+  lastError        String?      // human-readable reason for the last 'failed' status
   lastDownloadedAt DateTime     @default(now()) // touched on every download request
   createdAt        DateTime     @default(now())
   chunks           MovieChunk[]
