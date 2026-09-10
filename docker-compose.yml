@@ -21,8 +21,10 @@ services:
       # read from the host .env; the CDN worker fails fast when missing.
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-      - TELEGRAM_LOCAL_API_URL=${TELEGRAM_LOCAL_API_URL:-http://localhost:8081}
-    
+      # Local Bot API server — reachable via the shared Docker network by its
+      # service name (NOT localhost/172.17.0.1, which caused ECONNREFUSED).
+      # NOTE: the backend appends /bot<token> itself, so do NOT add /bot here.
+      - TELEGRAM_LOCAL_API_URL=${TELEGRAM_LOCAL_API_URL:-http://telegram-api:8081}
     volumes:
       # Persist SQLite database across container restarts
       - zenemozite-data:/app/data
@@ -41,8 +43,40 @@ services:
       - "com.zenemozite.description=Zenemozite Full-Stack Service (Frontend + Backend)"
       - "com.zenemozite.version=13.0"
 
+  # ---------------------------------------------------------------------------
+  # Telegram Local Bot API server ("--local" mode: up to 2GB uploads and the
+  # /file/bot<token>/... download endpoint used by telegramStore.js).
+  # Reachable from the backend at http://telegram-api:8081 (service name).
+  # Get TELEGRAM_API_ID / TELEGRAM_API_HASH from https://my.telegram.org
+  # ---------------------------------------------------------------------------
+  telegram-api:
+    image: aiogram/telegram-bot-api:latest
+    container_name: telegram-api
+    restart: unless-stopped
+
+    environment:
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      # Enable --local mode (required for 2GB uploads + local file downloads)
+      - TELEGRAM_LOCAL=1
+      - TELEGRAM_LOG_LEVEL=warn
+
+    volumes:
+      # Persist bot session + uploaded file store across restarts
+      - telegram-api-data:/var/lib/telegram-bot-api
+
+    networks:
+      - zenemozite-network
+
+    # Port 8081 is intentionally NOT published to the host: the backend talks
+    # to it over the internal Docker network. Uncomment for debugging only:
+    # ports:
+    #   - "127.0.0.1:8081:8081"
+
 volumes:
   zenemozite-data:
+    driver: local
+  telegram-api-data:
     driver: local
 
 networks:

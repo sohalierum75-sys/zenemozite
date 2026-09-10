@@ -96,13 +96,20 @@ jobs:
                   # Telegram CDN — loaded from the VPS /opt/zenemozite/.env below
                   - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
                   - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-                  - TELEGRAM_LOCAL_API_URL=${TELEGRAM_LOCAL_API_URL:-http://localhost:8081}
+                  # Local Bot API server — resolved by Docker service name on the
+                  # shared network (NOT localhost/172.17.0.1).
+                  # NOTE: the backend appends /bot<token> itself; no /bot suffix.
+                  - TELEGRAM_LOCAL_API_URL=${TELEGRAM_LOCAL_API_URL:-http://telegram-api:8081}
                 
                 volumes:
                   - zenemozite-data:/app/data
                 
                 networks:
                   - zenemozite-network
+                
+                # Wait for the Local Bot API server before starting the backend
+                depends_on:
+                  - telegram-api
                 
                 healthcheck:
                   test: ["CMD", "node", "-e", "require('http').get('http://localhost:5000/api/status', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
@@ -114,9 +121,31 @@ jobs:
                 labels:
                   - "com.zenemozite.description=Zenemozite Full-Stack Service (Frontend + Backend)"
                   - "com.zenemozite.version=13.0"
-
+            
+              # Telegram Local Bot API server (--local mode: 2GB uploads +
+              # /file/bot<token>/ downloads). Backend reaches it at
+              # http://telegram-api:8081 over the shared Docker network.
+              telegram-api:
+                image: aiogram/telegram-bot-api:latest
+                container_name: telegram-api
+                restart: unless-stopped
+                
+                environment:
+                  - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+                  - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+                  - TELEGRAM_LOCAL=1
+                  - TELEGRAM_LOG_LEVEL=warn
+                
+                volumes:
+                  - telegram-api-data:/var/lib/telegram-bot-api
+                
+                networks:
+                  - zenemozite-network
+            
             volumes:
               zenemozite-data:
+                driver: local
+              telegram-api-data:
                 driver: local
 
             networks:
