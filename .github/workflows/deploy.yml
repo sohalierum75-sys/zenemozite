@@ -155,6 +155,13 @@ jobs:
             
             echo "✅ docker-compose.yml created/updated"
             
+            # Ensure Telegram Local Bot API credentials exist in the VPS .env
+            # (idempotent: only appended when missing)
+            touch .env
+            grep -q '^TELEGRAM_API_ID=' .env || echo 'TELEGRAM_API_ID=23271365' >> .env
+            grep -q '^TELEGRAM_API_HASH=' .env || echo 'TELEGRAM_API_HASH=59a8393f1c17083798b42333d16ff224' >> .env
+            grep -q '^TELEGRAM_LOCAL_API_URL=' .env || echo 'TELEGRAM_LOCAL_API_URL=http://telegram-api:8081' >> .env
+            
             # Load environment variables from .env if it exists
             if [ -f .env ]; then
               export $(cat .env | grep -v '^#' | xargs)
