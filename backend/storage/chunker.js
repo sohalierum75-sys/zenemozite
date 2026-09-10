@@ -76,32 +76,50 @@ export async function splitAndUpload(filePath, { movieId, title, fileName, mimeT
 
     console.log(`[CHUNKER] Uploading chunk ${i + 1}/${chunkCount} (${formatBytes(thisSize)}) -> Telegram`);
 
-    // Byte-range read: this is the key — each ReadStream reads exactly
-    // the [start..end] window from the file, producing byte-identical chunks.
-    // highWaterMark caps the in-memory buffer at 1MB: data flows disk ->
-    // HTTP multipart body in small slices, so even a 2GB chunk upload keeps
-    // Node's RSS flat instead of spiking (OOM protection on low-RAM VPSes).
-    const readStream = fs.createReadStream(filePath, {
-      start,
-      end,
-      highWaterMark: 1024 * 1024, // 1MB
-    });
+    let readStream = null;
+    try {
+      // Byte-range read: this is the key — each ReadStream reads exactly
+      // the [start..end] window from the file, producing byte-identical
+      // chunks. highWaterMark caps in-memory buffering: data flows disk ->
+      // HTTP socket in small slices, so Node's RSS stays flat for the whole
+      // upload (OOM protection on low-RAM VPSes).
+      readStream = fs.createReadStream(filePath, {
+        start,
+        end,
+        highWaterMark: config.telegram.uploadHighWaterMarkBytes,
+      });
 
-    const { fileId } = await telegramStore.uploadStream(readStream, {
-      fileName: partName,
-      caption: title,
-    });
+      // knownLength: exact chunk size -> correct Content-Length and zero
+      // length-probing of the stream. uploadStream() streams this straight
+      // through form.submit() — the chunk is never held in a RAM buffer.
+      const { fileId } = await telegramStore.uploadStream(readStream, {
+        fileName: partName,
+        caption: title,
+        knownLength: thisSize,
+      });
 
-    await prisma.movieChunk.create({
-      data: {
-        movieId,
-        chunkIndex: i,
-        telegramFileId: fileId,
-        chunkSize: thisSize,
-      },
-    });
+      await prisma.movieChunk.create({
+        data: {
+          movieId,
+          chunkIndex: i,
+          telegramFileId: fileId,
+          chunkSize: thisSize,
+        },
+      });
 
-    console.log(`[CHUNKER] Chunk ${i + 1}/${chunkCount} saved (file_id: ${fileId})`);
+      console.log(`[CHUNKER] Chunk ${i + 1}/${chunkCount} saved (file_id: ${fileId})`);
+    } finally {
+      // HARD CLEANUP after every chunk: destroy the reader (releases the fd
+      // and its highWaterMark window), drop our reference, and hint the GC.
+      // With --expose-gc (entrypoint.sh) multipart scratch buffers from the
+      // finished chunk are reclaimed immediately instead of lingering into
+      // the next chunk's upload.
+      if (readStream && typeof readStream.destroy === 'function' && !readStream.destroyed) {
+        readStream.destroy();
+      }
+      readStream = null;
+      if (typeof global.gc === 'function') global.gc();
+    }
   }
 
   await prisma.movie.update({

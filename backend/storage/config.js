@@ -22,6 +22,12 @@ export const config = {
     // crashes (Error 521) on 1-2GB VPSes. Hard-clamped to 2GB no matter what
     // the env says, because the Local Bot API rejects anything larger.
     chunkSizeBytes: Math.min(Number(process.env.TELEGRAM_CHUNK_GB || 0.5), 2) * GIB,
+    // RAM cap for the multipart upload reader: the fs.ReadStream holds at
+    // most this much in memory at any instant while streaming to Telegram.
+    // 4MB is plenty for throughput; the file itself NEVER enters RAM.
+    uploadHighWaterMarkBytes: Math.round(
+      Math.min(Math.max(Number(process.env.TELEGRAM_HWM_MB || 4), 0.25), 16) * 1024 * 1024
+    ),
     get configured() {
       return Boolean(telegramToken && telegramChatId);
     },
