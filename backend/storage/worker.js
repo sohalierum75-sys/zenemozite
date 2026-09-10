@@ -22,7 +22,8 @@ import { splitAndUpload } from './chunker.js';
 
 const POLL_INTERVAL_MS = 30_000;            // queue poll cadence
 const MAX_CONCURRENT = Math.max(1, Number(process.env.CDN_MAX_CONCURRENT || 1)); // max simultaneous torrent jobs (1 = low-RAM safe)
-const TORRENT_TIMEOUT_MS = 30 * 60_000;     // hard cap per torrent (30 min)
+const TORRENT_TIMEOUT_MS = Math.max(30, Number(process.env.TORRENT_TIMEOUT_MIN || 120)) * 60_000; // SLIDING cap: max time with NO progress (re-armed by any bytes)
+const TORRENT_TOTAL_CAP_MS = Math.max(0, Number(process.env.TORRENT_MAX_TOTAL_MIN || 720)) * 60_000; // ABSOLUTE cap per torrent (0 = disabled)
 const METADATA_TIMEOUT_MS = 5 * 60_000;     // magnet must yield metadata in 5 min
 const STALL_TIMEOUT_MS = 5 * 60_000;        // no bytes for 5 min -> stalled
 const SWEEP_EVERY_TICKS = 5;                // orphan sweep cadence (~2.5 min)
@@ -306,7 +307,9 @@ async function processOne(movie) {
  *   - The torrent is tracked in pendingTorrents the moment it is added (not
  *     only on completion), so destroyTorrentByMagnet() can ALWAYS clean up.
  *   - Metadata timeout + stall watchdog: a dead torrent fails clean after
- *     ~5 min instead of squatting on a concurrency slot for 30 min.
+ *     ~5 min instead of squatting on a concurrency slot. The hard cap is
+ *     SLIDING (re-armed by progress, default 2h of silence), plus an
+ *     absolute total cap (default 12h) against zombie torrents.
  *   - Every rejection destroys the torrent and frees the slot.
  */
 async function downloadTorrent(magnetUri, movieId, title) {
@@ -323,13 +326,16 @@ async function downloadTorrent(magnetUri, movieId, title) {
     let progressInterval = null;
     let metadataTimeout = null;
     let hardTimeout = null;
+    let totalTimeout = null;
     let lastDownloaded = 0;
     let lastProgressAt = Date.now();
+    const startedAt = Date.now();
 
     const clearTimers = () => {
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
       if (metadataTimeout) { clearTimeout(metadataTimeout); metadataTimeout = null; }
       if (hardTimeout) { clearTimeout(hardTimeout); hardTimeout = null; }
+      if (totalTimeout) { clearTimeout(totalTimeout); totalTimeout = null; }
     };
 
     // Success: keep the torrent registered so the post-upload cleanup
@@ -351,6 +357,19 @@ async function downloadTorrent(magnetUri, movieId, title) {
         if (pendingTorrents.get(magnetUri) === torrent) pendingTorrents.delete(magnetUri);
       }
       reject(new Error(message));
+    };
+
+    // ---- SLIDING hard cap (the fix for "timed out after 30 minutes"):
+    // the timer is RE-ARMED every time download progress is detected (see the
+    // 10s progress watchdog below), so a slow-but-healthy download is never
+    // killed mid-flight. It only fires if a torrent goes completely silent
+    // for the whole window (default 2h) — the 5-min stall watchdog already
+    // catches fully dead ones long before that.
+    const armHardTimeout = () => {
+      if (hardTimeout) clearTimeout(hardTimeout);
+      hardTimeout = setTimeout(() => {
+        fail(`Torrent "${title}" made no download progress for ${Math.round(TORRENT_TIMEOUT_MS / 60000)} minutes (sliding hard cap) — connection is effectively dead`);
+      }, TORRENT_TIMEOUT_MS);
     };
 
     // ---- CRITICAL: destroy any previous instance for this magnet BEFORE
@@ -386,6 +405,9 @@ async function downloadTorrent(magnetUri, movieId, title) {
         if (t.downloaded > lastDownloaded) {
           lastDownloaded = t.downloaded;
           lastProgressAt = Date.now();
+          // Progress detected -> re-arm the sliding hard cap so a slow but
+          // healthy download is never killed mid-flight.
+          armHardTimeout();
         } else if (Date.now() - lastProgressAt > STALL_TIMEOUT_MS) {
           log(movieId, title, `STALL: no download progress for ${STALL_TIMEOUT_MS / 60000} min (peers: ${t.numPeers}) — aborting`);
           fail(`Torrent stalled for "${title}" — no data received for ${STALL_TIMEOUT_MS / 60000} minutes (peers: ${t.numPeers}). Try a different torrent source.`);
@@ -430,10 +452,17 @@ async function downloadTorrent(magnetUri, movieId, title) {
       fail(`No torrent metadata received for "${title}" after ${METADATA_TIMEOUT_MS / 60000} minutes (dead magnet or 0 peers) — try a different torrent`);
     }, METADATA_TIMEOUT_MS);
 
-    // ---- Hard cap on the entire download
-    hardTimeout = setTimeout(() => {
-      fail(`Torrent download timed out after ${TORRENT_TIMEOUT_MS / 60000} minutes for "${title}"`);
-    }, TORRENT_TIMEOUT_MS);
+    // ---- SLIDING hard cap: armed now, re-armed on every progress tick
+    armHardTimeout();
+
+    // ---- ABSOLUTE cap (default 12h, 0 = disabled): even a trickling torrent
+    // must eventually give up its queue slot, or one pathological swarm could
+    // block the concurrency lane forever.
+    if (TORRENT_TOTAL_CAP_MS > 0) {
+      totalTimeout = setTimeout(() => {
+        fail(`Torrent for "${title}" exceeded the absolute total cap of ${Math.round(TORRENT_TOTAL_CAP_MS / 3600000)}h (started ${Math.round((Date.now() - startedAt) / 60000)} min ago)`);
+      }, TORRENT_TOTAL_CAP_MS);
+    }
 
     torrent.once('error', (err) => {
       fail(`WebTorrent error: ${err && err.message}`);
