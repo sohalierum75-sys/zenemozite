@@ -3248,3 +3248,16 @@ process.on('SIGTERM', () => {
   console.log('\n[SHUTDOWN] Server closing...');
   process.exit(0);
 });
+
+// ---- PROCESS-LEVEL CRASH PROTECTION ----------------------------------------
+// A stray async error (WebTorrent internals, a socket that emits 'error'
+// without a listener, an un-awaited promise) must NEVER take down the whole
+// container — a dead backend is what upstream users experience as Cloudflare
+// Error 521. We log loudly and keep the HTTP server + CDN worker alive.
+process.on('uncaughtException', (err) => {
+  console.error('[SERVER] Uncaught exception (server kept alive):', err && (err.stack || err.message || err));
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[SERVER] Unhandled promise rejection (server kept alive):', reason instanceof Error ? (reason.stack || reason.message) : reason);
+});

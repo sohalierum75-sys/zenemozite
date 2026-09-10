@@ -13,12 +13,15 @@ export const config = {
   telegram: {
     botToken: telegramToken,
     chatId: telegramChatId,
-    localApiUrl: (process.env.TELEGRAM_LOCAL_API_URL || 'http://localhost:8081').replace(/\/+$/, ''),
+    localApiUrl: (process.env.TELEGRAM_LOCAL_API_URL || 'http://telegram-api:8081').replace(/\/+$/, ''),
     // Hard per-upload limit: the Local Bot API accepts up to 2GB
     maxSizeBytes: Number(process.env.TELEGRAM_MAX_GB || 2) * GIB,
     // Target chunk size for splitting large files (must be < maxSizeBytes).
-    // 1.9GB leaves headroom for multipart encoding overhead.
-    chunkSizeBytes: Number(process.env.TELEGRAM_CHUNK_GB || 1.9) * GIB,
+    // LOW-RAM SAFETY: default 0.5GB (was 1.9GB). Smaller byte-range chunks
+    // keep upload buffers and HTTP multipart overhead small, preventing OOM
+    // crashes (Error 521) on 1-2GB VPSes. Hard-clamped to 2GB no matter what
+    // the env says, because the Local Bot API rejects anything larger.
+    chunkSizeBytes: Math.min(Number(process.env.TELEGRAM_CHUNK_GB || 0.5), 2) * GIB,
     get configured() {
       return Boolean(telegramToken && telegramChatId);
     },

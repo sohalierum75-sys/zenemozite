@@ -78,7 +78,14 @@ export async function splitAndUpload(filePath, { movieId, title, fileName, mimeT
 
     // Byte-range read: this is the key — each ReadStream reads exactly
     // the [start..end] window from the file, producing byte-identical chunks.
-    const readStream = fs.createReadStream(filePath, { start, end });
+    // highWaterMark caps the in-memory buffer at 1MB: data flows disk ->
+    // HTTP multipart body in small slices, so even a 2GB chunk upload keeps
+    // Node's RSS flat instead of spiking (OOM protection on low-RAM VPSes).
+    const readStream = fs.createReadStream(filePath, {
+      start,
+      end,
+      highWaterMark: 1024 * 1024, // 1MB
+    });
 
     const { fileId } = await telegramStore.uploadStream(readStream, {
       fileName: partName,

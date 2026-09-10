@@ -21,7 +21,7 @@ import { config, formatBytes } from './config.js';
 import { splitAndUpload } from './chunker.js';
 
 const POLL_INTERVAL_MS = 30_000;            // queue poll cadence
-const MAX_CONCURRENT = 2;                   // max simultaneous torrent jobs
+const MAX_CONCURRENT = Math.max(1, Number(process.env.CDN_MAX_CONCURRENT || 1)); // max simultaneous torrent jobs (1 = low-RAM safe)
 const TORRENT_TIMEOUT_MS = 30 * 60_000;     // hard cap per torrent (30 min)
 const METADATA_TIMEOUT_MS = 5 * 60_000;     // magnet must yield metadata in 5 min
 const STALL_TIMEOUT_MS = 5 * 60_000;        // no bytes for 5 min -> stalled
@@ -46,7 +46,10 @@ async function getClient() {
       try {
         const mod = await import('webtorrent');
         const WebTorrent = mod.default || mod;
-        const client = new WebTorrent({ maxConns: 55 });
+        const client = new WebTorrent({
+          // Fewer peer connections = fewer per-peer socket + buffer allocations.
+          maxConns: Math.max(10, Number(process.env.TORRENT_MAX_CONNS || 25)),
+        });
         client.on('error', (err) => console.error('[CDN_WORKER] WebTorrent client error:', err && err.message));
         console.log('[CDN_WORKER] WebTorrent client initialized');
         return client;
@@ -135,14 +138,44 @@ export function startWorker() {
   setInterval(() => {
     pollTick += 1;
     if (pollTick % 20 === 0) { // heartbeat every ~10 min proves liveness in Docker logs
-      console.log(`[CDN_WORKER] Heartbeat: poll loop alive (tick ${pollTick}), ${processingIds.size} job(s) in progress`);
+      console.log(`[CDN_WORKER] Heartbeat: poll loop alive (tick ${pollTick}), ${processingIds.size} job(s) in progress, heap ${(process.memoryUsage().heapUsed / 1048576).toFixed(0)}MB, free RAM ${(os.freemem() / 1048576).toFixed(0)}MB`);
     }
     if (pollTick % SWEEP_EVERY_TICKS === 0) sweepOrphanedCachingJobs();
     pollAndProcess().catch((e) => console.error('[CDN_WORKER] Poll error:', e && e.message));
   }, POLL_INTERVAL_MS);
 }
 
+// ---- LOW-RAM MEMORY GUARD ----------------------------------------------------
+// On a 1-2GB VPS the kernel OOM killer murders the whole container (users see
+// Cloudflare Error 521) when a new torrent is claimed while RAM is already
+// exhausted by an in-flight upload. Before claiming NEW work we check free
+// system RAM and the Node heap, and defer to the next poll if either is under
+// pressure. Already-running jobs are never interrupted — only new claims.
+const MIN_FREE_SYS_MB = Math.max(0, Number(process.env.CDN_MIN_FREE_MB || 150));
+const MAX_HEAP_MB = Math.max(0, Number(process.env.CDN_MAX_HEAP_MB || 512));
+
+function systemHasHeadroom() {
+  try {
+    const freeSysMb = os.freemem() / (1024 * 1024);
+    const heapMb = process.memoryUsage().heapUsed / (1024 * 1024);
+    if (freeSysMb < MIN_FREE_SYS_MB) {
+      console.warn(`[CDN_WORKER] Memory guard: only ${freeSysMb.toFixed(0)}MB system RAM free (< ${MIN_FREE_SYS_MB}MB) — deferring new jobs to the next poll`);
+      return false;
+    }
+    if (MAX_HEAP_MB > 0 && heapMb > MAX_HEAP_MB) {
+      console.warn(`[CDN_WORKER] Memory guard: Node heap at ${heapMb.toFixed(0)}MB (> ${MAX_HEAP_MB}MB) — deferring new jobs to the next poll`);
+      return false;
+    }
+    return true;
+  } catch {
+    return true; // the guard must never itself block the queue
+  }
+}
+
 async function pollAndProcess() {
+  // LOW-RAM MEMORY GUARD: defer claiming new jobs while RAM is under pressure
+  if (!systemHasHeadroom()) return;
+
   // Respect the concurrency cap — only claim as many items as there are
   // free slots, so the loop can never oversubscribe the torrent client.
   const freeSlots = MAX_CONCURRENT - processingIds.size;

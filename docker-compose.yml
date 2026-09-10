@@ -25,6 +25,9 @@ services:
       # service name (NOT localhost/172.17.0.1, which caused ECONNREFUSED).
       # NOTE: the backend appends /bot<token> itself, so do NOT add /bot here.
       - TELEGRAM_LOCAL_API_URL=${TELEGRAM_LOCAL_API_URL:-http://telegram-api:8081}
+      # Low-RAM tuning: 512MB chunks + 1 torrent at a time prevent OOM crashes
+      - TELEGRAM_CHUNK_GB=${TELEGRAM_CHUNK_GB:-0.5}
+      - CDN_MAX_CONCURRENT=${CDN_MAX_CONCURRENT:-1}
     volumes:
       # Persist SQLite database across container restarts
       - zenemozite-data:/app/data
