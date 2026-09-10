@@ -108,8 +108,10 @@ COPY --from=frontend-builder --chown=nodejs:nodejs /app/dist ./frontend/dist
 # actually loads in the runtime image (Debian glibc, Node 22):
 RUN node -e "require('/app/backend/node_modules/node-datachannel'); console.log('node-datachannel loads in runtime image')"
 
-# Create directory for SQLite database with proper permissions
-RUN mkdir -p /app/data && chown -R nodejs:nodejs /app/data
+# Create directories for SQLite database and the shared torrent/upload volume
+# (named volumes inherit ownership from these image dirs on first mount, so
+# the non-root nodejs user can write into them)
+RUN mkdir -p /app/data /app/shared && chown -R nodejs:nodejs /app/data /app/shared
 
 # Switch to non-root user
 USER nodejs

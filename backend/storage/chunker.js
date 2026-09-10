@@ -18,14 +18,34 @@ import { config, formatBytes } from './config.js';
 import * as telegramStore from './telegramStore.js';
 
 /**
+ * Copy the byte range [start..end] of filePath into its own file (pure disk
+ * I/O, 1MB buffers) so it can be handed to the Local Bot API via file://.
+ * A ranged byte-range can't be expressed as a file:// URI — splicing gives
+ * each chunk its own real file without ever holding chunk data in RAM.
+ */
+async function spliceRange(filePath, start, end, outPath) {
+  await new Promise((resolve, reject) => {
+    const rs = fs.createReadStream(filePath, { start, end, highWaterMark: 1024 * 1024 });
+    const ws = fs.createWriteStream(outPath);
+    ws.once('finish', resolve);
+    ws.once('error', reject);
+    rs.once('error', reject);
+    rs.pipe(ws); // pipe = built-in backpressure handling
+  });
+}
+
+/**
  * Spool an incoming Readable stream to a temp file so we can perform
  * ranged reads for chunking. (Needed when the torrent logic provides a
- * live stream rather than a file on disk.)
+ * live stream rather than a file on disk.) Prefers the shared telegram-api
+ * volume so the spooled file can also be uploaded via file:// later.
  * @returns {Promise<string>} the temp file path
  */
 export async function spoolToTemp(sourceStream) {
+  const dir = config.telegram.sharedDir || os.tmpdir();
+  try { fs.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
   const tmpPath = path.join(
-    os.tmpdir(),
+    dir,
     `zinemo-cache-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   );
   const writeStream = fs.createWriteStream(tmpPath);
@@ -65,6 +85,10 @@ export async function splitAndUpload(filePath, { movieId, title, fileName, mimeT
   const ext = path.extname(safeName) || '.mp4';
   const stem = path.basename(safeName, ext);
 
+  // file:// (zero-RAM) uploads are only possible when the file — or its
+  // spliced part files — live in the shared telegram-api volume.
+  const canFileUri = Boolean(config.telegram.sharedDir);
+
   for (let i = 0; i < chunkCount; i++) {
     const start = i * chunkSize;
     const end = Math.min((i + 1) * chunkSize, totalSize) - 1;
@@ -77,26 +101,41 @@ export async function splitAndUpload(filePath, { movieId, title, fileName, mimeT
     console.log(`[CHUNKER] Uploading chunk ${i + 1}/${chunkCount} (${formatBytes(thisSize)}) -> Telegram`);
 
     let readStream = null;
+    let partPath = null;
     try {
-      // Byte-range read: this is the key — each ReadStream reads exactly
-      // the [start..end] window from the file, producing byte-identical
-      // chunks. highWaterMark caps in-memory buffering: data flows disk ->
-      // HTTP socket in small slices, so Node's RSS stays flat for the whole
-      // upload (OOM protection on low-RAM VPSes).
-      readStream = fs.createReadStream(filePath, {
-        start,
-        end,
-        highWaterMark: config.telegram.uploadHighWaterMarkBytes,
-      });
-
-      // knownLength: exact chunk size -> correct Content-Length and zero
-      // length-probing of the stream. uploadStream() streams this straight
-      // through form.submit() — the chunk is never held in a RAM buffer.
-      const { fileId } = await telegramStore.uploadStream(readStream, {
-        fileName: partName,
-        caption: title,
-        knownLength: thisSize,
-      });
+      let result;
+      if (canFileUri) {
+        // ZERO-RAM path: hand the Local Bot API a file:// path on the shared
+        // volume — the API server reads the bytes from its own disk. Single-
+        // chunk files are handed as-is; multi-chunk files get each byte
+        // range spliced to its own part file (pure disk I/O, 1MB buffers),
+        // then the part file is deleted immediately after upload.
+        if (chunkCount === 1) {
+          result = await telegramStore.uploadFileFromDisk(filePath, { fileName: partName, caption: title });
+        } else {
+          partPath = path.join(
+            config.telegram.sharedDir,
+            `.chunk-${String(movieId || 'x').slice(0, 8)}-${i + 1}-${Date.now()}${ext}`
+          );
+          await spliceRange(filePath, start, end, partPath);
+          result = await telegramStore.uploadFileFromDisk(partPath, { fileName: partName, caption: title });
+        }
+      } else {
+        // STREAMING fallback (still low-RAM, used when TELEGRAM_SHARED_DIR is
+        // not configured): pipe the byte range straight into the HTTP request
+        // in 4MB slices via form.submit() — never a whole-chunk RAM buffer.
+        readStream = fs.createReadStream(filePath, {
+          start,
+          end,
+          highWaterMark: config.telegram.uploadHighWaterMarkBytes,
+        });
+        result = await telegramStore.uploadStream(readStream, {
+          fileName: partName,
+          caption: title,
+          knownLength: thisSize, // exact Content-Length, no stream probing
+        });
+      }
+      const fileId = result.fileId;
 
       await prisma.movieChunk.create({
         data: {
@@ -109,11 +148,11 @@ export async function splitAndUpload(filePath, { movieId, title, fileName, mimeT
 
       console.log(`[CHUNKER] Chunk ${i + 1}/${chunkCount} saved (file_id: ${fileId})`);
     } finally {
-      // HARD CLEANUP after every chunk: destroy the reader (releases the fd
-      // and its highWaterMark window), drop our reference, and hint the GC.
-      // With --expose-gc (entrypoint.sh) multipart scratch buffers from the
-      // finished chunk are reclaimed immediately instead of lingering into
-      // the next chunk's upload.
+      // HARD CLEANUP after every chunk: delete the spliced part file, destroy
+      // the reader (releases fd + highWaterMark window), drop references, and
+      // hint the GC (--expose-gc is enabled in entrypoint.sh) so multipart
+      // scratch buffers never linger into the next chunk's upload.
+      if (partPath) fs.promises.unlink(partPath).catch(() => {});
       if (readStream && typeof readStream.destroy === 'function' && !readStream.destroyed) {
         readStream.destroy();
       }

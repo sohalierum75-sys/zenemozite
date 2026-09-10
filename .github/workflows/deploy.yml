@@ -101,11 +101,16 @@ jobs:
                   # NOTE: the backend appends /bot<token> itself; no /bot suffix.
                   - TELEGRAM_LOCAL_API_URL=${TELEGRAM_LOCAL_API_URL:-http://telegram-api:8081}
                   # Low-RAM tuning: 512MB chunks + 1 torrent at a time prevent OOM crashes
+                  # Low-RAM tuning: 512MB chunks + 1 torrent at a time prevent OOM crashes
                   - TELEGRAM_CHUNK_GB=${TELEGRAM_CHUNK_GB:-0.5}
                   - CDN_MAX_CONCURRENT=${CDN_MAX_CONCURRENT:-1}
+                  # Shared volume with telegram-api -> enables zero-RAM file:// uploads
+                  - TELEGRAM_SHARED_DIR=${TELEGRAM_SHARED_DIR:-/app/shared}
                 
                 volumes:
                   - zenemozite-data:/app/data
+                  # Torrent downloads land here; telegram-api reads them via file://
+                  - telegram-shared:/app/shared
                 
                 networks:
                   - zenemozite-network
@@ -141,6 +146,9 @@ jobs:
                 
                 volumes:
                   - telegram-api-data:/var/lib/telegram-bot-api
+                  # Same shared volume as the backend: the Local Bot API reads
+                  # torrent files from here via file:// (zero-RAM uploads)
+                  - telegram-shared:/app/shared:ro
                 
                 networks:
                   - zenemozite-network
@@ -149,6 +157,8 @@ jobs:
               zenemozite-data:
                 driver: local
               telegram-api-data:
+                driver: local
+              telegram-shared:
                 driver: local
 
             networks:

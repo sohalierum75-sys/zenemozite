@@ -17,17 +17,23 @@ export const config = {
     // Hard per-upload limit: the Local Bot API accepts up to 2GB
     maxSizeBytes: Number(process.env.TELEGRAM_MAX_GB || 2) * GIB,
     // Target chunk size for splitting large files (must be < maxSizeBytes).
-    // LOW-RAM SAFETY: default 0.5GB (was 1.9GB). Smaller byte-range chunks
-    // keep upload buffers and HTTP multipart overhead small, preventing OOM
-    // crashes (Error 521) on 1-2GB VPSes. Hard-clamped to 2GB no matter what
-    // the env says, because the Local Bot API rejects anything larger.
-    chunkSizeBytes: Math.min(Number(process.env.TELEGRAM_CHUNK_GB || 0.5), 2) * GIB,
+    // STRICT LIMIT: hard-clamped to 1GB — Telegram's Local API rejects
+    // ~2GB single parts with "Bad Request: FILE_PARTS_INVALID", and huge
+    // parts caused OOM crashes on the VPS. 0.5GB default; the clamp makes
+    // even a stale TELEGRAM_CHUNK_GB=1.9 in an old .env safe.
+    chunkSizeBytes: Math.min(Number(process.env.TELEGRAM_CHUNK_GB || 0.5), 1) * GIB,
     // RAM cap for the multipart upload reader: the fs.ReadStream holds at
     // most this much in memory at any instant while streaming to Telegram.
     // 4MB is plenty for throughput; the file itself NEVER enters RAM.
     uploadHighWaterMarkBytes: Math.round(
       Math.min(Math.max(Number(process.env.TELEGRAM_HWM_MB || 4), 0.25), 16) * 1024 * 1024
     ),
+    // Shared directory mounted into BOTH this container and the telegram-api
+    // container (see docker-compose `telegram-shared` volume). When set,
+    // uploads use the Local Bot API's file:// shortcut: the API server reads
+    // the file from ITS OWN disk, so zero file bytes flow through this Node
+    // process and HTTP upload timeouts disappear.
+    sharedDir: (process.env.TELEGRAM_SHARED_DIR || '').trim(),
     get configured() {
       return Boolean(telegramToken && telegramChatId);
     },

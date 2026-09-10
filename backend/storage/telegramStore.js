@@ -26,6 +26,36 @@ function assertConfigured() {
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 
 /**
+ * POST a multipart form to the Local Bot API via form.submit() (raw Node
+ * http request). The response is consumed in small chunks with a hard 1MB
+ * cap and released immediately — the ONLY data this helper ever holds in RAM.
+ */
+function submitForm(form) {
+  return new Promise((resolve, reject) => {
+    form.submit(`${apiBase()}/sendDocument`, (err, response) => {
+      if (err) return reject(err);
+      const chunks = [];
+      let size = 0;
+      response.on('data', (c) => {
+        size += c.length;
+        if (size > MAX_RESPONSE_BYTES) {
+          response.destroy();
+          reject(new Error('Telegram API response exceeded 1MB — aborted (refusing to buffer)'));
+          return;
+        }
+        chunks.push(c);
+      });
+      response.once('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+        chunks.length = 0; // release the response buffers immediately
+        resolve({ statusCode: response.statusCode, body });
+      });
+      response.once('error', reject);
+    });
+  });
+}
+
+/**
  * Upload any Readable stream as a document to the private channel.
  * This is the core upload — whole-file uploads and byte-range chunk uploads
  * both go through here.
@@ -58,31 +88,11 @@ export async function uploadStream(stream, { fileName, caption, knownLength } = 
   let statusCode = null;
   let body = '';
   try {
-    // form.submit() = raw http.request; response is consumed in small chunks
-    // with a hard cap, so a runaway reply can never balloon RSS.
-    await new Promise((resolve, reject) => {
-      form.submit(`${apiBase()}/sendDocument`, (err, response) => {
-        if (err) return reject(err);
-        const chunks = [];
-        let size = 0;
-        response.on('data', (c) => {
-          size += c.length;
-          if (size > MAX_RESPONSE_BYTES) {
-            response.destroy();
-            reject(new Error('Telegram API response exceeded 1MB — aborted (refusing to buffer)'));
-            return;
-          }
-          chunks.push(c);
-        });
-        response.once('end', () => {
-          body = Buffer.concat(chunks).toString('utf8');
-          chunks.length = 0; // release the response buffers immediately
-          statusCode = response.statusCode;
-          resolve();
-        });
-        response.once('error', reject);
-      });
-    });
+    // form.submit() pipes the ReadStream straight into the HTTP socket —
+    // the file body is NEVER accumulated in RAM. Backpressure is handled by
+    // the pipe: if the socket is slow, the fs.ReadStream is paused and its
+    // buffers stay capped at highWaterMark.
+    ({ statusCode, body } = await submitForm(form));
   } finally {
     // ALWAYS release the file handle + any buffered window, even on failure —
     // a leaked paused stream holds its highWaterMark buffer in RAM forever.
@@ -116,12 +126,62 @@ export async function uploadStream(stream, { fileName, caption, knownLength } = 
   };
 }
 
-/** Convenience: upload a file from disk */
+/**
+ * TRUE zero-RAM upload: hands the file to the Local Bot API by file:// URI.
+ * The Local Bot API server reads the file from ITS OWN disk, so no file
+ * bytes ever cross this Node process (also immune to HTTP upload timeouts).
+ *
+ * Only possible when the file lives in TELEGRAM_SHARED_DIR — a Docker volume
+ * mounted into BOTH the backend and the telegram-api containers. Falls back
+ * to a streaming upload when the path is outside the shared dir or the
+ * shortcut is rejected by the server.
+ */
+export async function uploadFileFromDisk(filePath, { fileName, caption } = {}) {
+  assertConfigured();
+
+  if (config.telegram.sharedDir && isInsideSharedDir(filePath)) {
+    const form = new FormData();
+    form.append('chat_id', config.telegram.chatId);
+    if (caption) form.append('caption', String(caption).slice(0, 1024));
+    // The whole "upload" is this tiny URI string — the API server does the
+    // disk read itself.
+    form.append('document', `file://${path.resolve(filePath)}`);
+    try {
+      const { statusCode, body } = await submitForm(form);
+      if (statusCode >= 400) throw new Error(`HTTP ${statusCode}: ${String(body).slice(0, 200)}`);
+      let json;
+      try {
+        json = JSON.parse(body);
+      } catch {
+        throw new Error(`non-JSON response: ${String(body).slice(0, 200)}`);
+      }
+      if (!json?.ok) throw new Error(json?.description || 'unknown error');
+      const doc = json.result.document;
+      console.log(`[TELEGRAM_CDN] Uploaded via file:// (zero-RAM) "${doc.file_name}" (${doc.file_size} bytes) -> file_id ${doc.file_id}`);
+      return { fileId: doc.file_id, messageId: json.result.message_id, fileSize: doc.file_size };
+    } catch (err) {
+      // Never let a misconfigured shared volume break the pipeline — retry
+      // the same file through the (still low-RAM) streaming path.
+      console.warn(`[TELEGRAM_CDN] file:// upload failed (${err && err.message}) — falling back to streaming upload`);
+    }
+  }
+
+  return uploadStream(
+    fs.createReadStream(filePath, { highWaterMark: config.telegram.uploadHighWaterMarkBytes }),
+    { fileName: fileName || path.basename(filePath), caption }
+  );
+}
+
+/** True when `p` lives inside the shared telegram-api volume (file:// usable). */
+function isInsideSharedDir(p) {
+  if (!config.telegram.sharedDir) return false;
+  const rel = path.relative(path.resolve(config.telegram.sharedDir), path.resolve(p));
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+/** Convenience: upload a file from disk (file:// when possible, else stream) */
 export async function uploadFile(filePath, options = {}) {
-  return uploadStream(fs.createReadStream(filePath), {
-    fileName: options.fileName || path.basename(filePath),
-    caption: options.caption,
-  });
+  return uploadFileFromDisk(filePath, options);
 }
 
 /**
@@ -162,4 +222,4 @@ export async function getChunkStream(fileId) {
   return openFileStream(filePath);
 }
 
-export default { uploadFile, uploadStream, getFilePath, openFileStream, getChunkStream };
+export default { uploadFile, uploadFileFromDisk, uploadStream, getFilePath, openFileStream, getChunkStream };

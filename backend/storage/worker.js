@@ -14,6 +14,7 @@
 //      ALWAYS destroyed, so "Try Again" can immediately re-initiate a fresh
 //      download instead of hanging on WebTorrent's infoHash dedupe.
 // ==============================================================================
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import prisma from '../prisma/client.js';
@@ -27,6 +28,15 @@ const TORRENT_TOTAL_CAP_MS = Math.max(0, Number(process.env.TORRENT_MAX_TOTAL_MI
 const METADATA_TIMEOUT_MS = 5 * 60_000;     // magnet must yield metadata in 5 min
 const STALL_TIMEOUT_MS = 5 * 60_000;        // no bytes for 5 min -> stalled
 const SWEEP_EVERY_TICKS = 5;                // orphan sweep cadence (~2.5 min)
+
+// Torrents are downloaded into the SHARED telegram-api volume when
+// TELEGRAM_SHARED_DIR is set — that's what makes the Local Bot API's
+// zero-RAM file:// upload possible (the API server reads the file from its
+// own disk). Falls back to the container's /tmp otherwise.
+const DOWNLOAD_DIR = config.telegram.sharedDir || os.tmpdir();
+if (config.telegram.sharedDir) {
+  try { fs.mkdirSync(DOWNLOAD_DIR, { recursive: true }); } catch { /* exists */ }
+}
 
 // The WebTorrent client is created LAZILY via dynamic import: its native
 // dependency (node-datachannel) can fail to load on some hosts, and a static
@@ -431,7 +441,7 @@ async function downloadTorrent(magnetUri, movieId, title) {
     // (invalid magnet, WebTorrent init failure) so a single bad magnet can
     // never hang or crash the whole queue loop.
     try {
-      torrent = wt.add(magnetUri, { path: os.tmpdir() }, onMetadata);
+      torrent = wt.add(magnetUri, { path: DOWNLOAD_DIR }, onMetadata);
     } catch (err) {
       fail(`Torrent failed to initialize for "${title}": ${err && err.message}`);
       return;
