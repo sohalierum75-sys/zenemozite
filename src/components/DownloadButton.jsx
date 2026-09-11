@@ -23,12 +23,19 @@ const WEBTOR_URL = 'https://webtor.io/';
 const DownloadButton = ({ movieId, magnetLink, title, label = 'Download', className = '' }) => {
   const [opened, setOpened] = useState(false);
 
-  /** webtor.io deep link: magnet URIs use ?magnet=, .torrent URLs use ?torrent= */
+  /**
+   * webtor.io deep link: the magnet URI (or .torrent URL) is appended as a
+   * URL HASH fragment — `https://webtor.io/#<encoded-target>` — which
+   * webtor.io's client-side app reads to auto-start processing the torrent.
+   * A hash is used instead of a query string (?magnet=...) because query
+   * params only reach webtor.io's home page, while the hash is captured by
+   * their frontend app and triggers the immediate search/processing flow.
+   * encodeURIComponent escapes every reserved character (&, ?, #, +, spaces…)
+   * so the magnet never breaks out of the fragment.
+   */
   const buildWebtorUrl = () => {
     if (!magnetLink) return WEBTOR_URL;
-    const isMagnet = magnetLink.startsWith('magnet:');
-    const key = isMagnet ? 'magnet' : 'torrent';
-    return `${WEBTOR_URL}?${key}=${encodeURIComponent(magnetLink)}`;
+    return `${WEBTOR_URL}#${encodeURIComponent(magnetLink)}`;
   };
 
   /**
