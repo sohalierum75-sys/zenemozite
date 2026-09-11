@@ -59,12 +59,40 @@ export async function spoolToTemp(sourceStream) {
 }
 
 /**
+ * Build the user-facing file name for one part of a split movie.
+ * Example: buildPartFileName('Toy Story (1995).mkv', 1, 2) -> 'Toy Story (1995) - Part 2.mkv'
+ *
+ * This name is used BOTH as the Telegram document name (streaming uploads)
+ * AND as the on-disk name of the spliced part file — the Local Bot API's
+ * file:// upload path derives the document name from the on-disk file name,
+ * so the spliced file MUST already carry the real movie name.
+ *
+ * @param {string} fileName — original file name (falls back safely)
+ * @param {number} index — 0-based part index
+ * @param {number} total — total part count (used to zero-pad for sort order)
+ * @returns {string}
+ */
+export function buildPartFileName(fileName, index, total) {
+  const ext = path.extname(fileName || '') || '.mp4';
+  const stem =
+    path
+      .basename(fileName || '', ext)
+      .replace(/[\\/:*?"<>|]+/g, ' ') // strip filesystem-unsafe characters
+      .replace(/\s+/g, ' ')
+      .trim() || 'movie';
+  const width = String(Math.max(1, total)).length;
+  return `${stem} - Part ${String(index + 1).padStart(width, '0')}${ext}`;
+}
+
+/**
  * Split a file into byte-range chunks and upload each to Telegram sequentially.
- * Saves one MovieChunk row per chunk (ordered by chunkIndex).
+ * Saves one MovieChunk row per chunk (ordered by chunkIndex) and, once every
+ * part is uploaded, stores the full ordered array of Telegram file_ids on the
+ * Movie row (telegramFileIds JSON) for easy multi-part download handling.
  *
  * @param {string} filePath — path to the complete file on disk
  * @param {{ movieId: string, title: string, fileName?: string, mimeType?: string }} opts
- * @returns {{ chunkCount: number, totalSize: number }}
+ * @returns {{ chunkCount: number, totalSize: number, fileIds: string[] }}
  */
 export async function splitAndUpload(filePath, { movieId, title, fileName, mimeType } = {}) {
   const stat = await fs.promises.stat(filePath);
@@ -83,22 +111,27 @@ export async function splitAndUpload(filePath, { movieId, title, fileName, mimeT
 
   const safeName = fileName || `${title}.mp4`;
   const ext = path.extname(safeName) || '.mp4';
-  const stem = path.basename(safeName, ext);
 
   // file:// (zero-RAM) uploads are only possible when the file — or its
   // spliced part files — live in the shared telegram-api volume.
   const canFileUri = Boolean(config.telegram.sharedDir);
+
+  // Ordered Telegram file_ids for every part — persisted on the Movie row
+  // as a JSON array (telegramFileIds) once the whole upload finishes.
+  const fileIds = [];
 
   for (let i = 0; i < chunkCount; i++) {
     const start = i * chunkSize;
     const end = Math.min((i + 1) * chunkSize, totalSize) - 1;
     const thisSize = end - start + 1;
 
-    const partName = chunkCount > 1
-      ? `${stem}.part${String(i + 1).padStart(2, '0')}${ext}`
-      : safeName;
+    // Real, human-readable part name: "Movie Name - Part 1.mkv".
+    // In file:// mode the Local Bot API derives the Telegram document name
+    // from the ON-DISK file name, so the spliced file itself must be named
+    // this way — otherwise Telegram stores ugly temp names like ".chunk-…".
+    const partName = chunkCount > 1 ? buildPartFileName(safeName, i, chunkCount) : safeName;
 
-    console.log(`[CHUNKER] Uploading chunk ${i + 1}/${chunkCount} (${formatBytes(thisSize)}) -> Telegram`);
+    console.log(`[CHUNKER] Uploading chunk ${i + 1}/${chunkCount} (${formatBytes(thisSize)}) -> "${partName}"`);
 
     let readStream = null;
     let partPath = null;
@@ -109,14 +142,11 @@ export async function splitAndUpload(filePath, { movieId, title, fileName, mimeT
         // volume — the API server reads the bytes from its own disk. Single-
         // chunk files are handed as-is; multi-chunk files get each byte
         // range spliced to its own part file (pure disk I/O, 1MB buffers),
-        // then the part file is deleted immediately after upload.
+        // named "<Movie Name> - Part N<ext>", then deleted after upload.
         if (chunkCount === 1) {
           result = await telegramStore.uploadFileFromDisk(filePath, { fileName: partName, caption: title });
         } else {
-          partPath = path.join(
-            config.telegram.sharedDir,
-            `.chunk-${String(movieId || 'x').slice(0, 8)}-${i + 1}-${Date.now()}${ext}`
-          );
+          partPath = path.join(config.telegram.sharedDir, partName);
           await spliceRange(filePath, start, end, partPath);
           result = await telegramStore.uploadFileFromDisk(partPath, { fileName: partName, caption: title });
         }
@@ -136,6 +166,7 @@ export async function splitAndUpload(filePath, { movieId, title, fileName, mimeT
         });
       }
       const fileId = result.fileId;
+      fileIds.push(fileId);
 
       await prisma.movieChunk.create({
         data: {
@@ -163,11 +194,17 @@ export async function splitAndUpload(filePath, { movieId, title, fileName, mimeT
 
   await prisma.movie.update({
     where: { id: movieId },
-    data: { status: 'ready' },
+    data: {
+      status: 'ready',
+      // Ordered array of Telegram file_ids for ALL parts of this movie,
+      // e.g. '["id_part1","id_part2"]' — lets the API/frontend handle the
+      // multi-part download without re-querying every MovieChunk row.
+      telegramFileIds: JSON.stringify(fileIds),
+    },
   });
 
   console.log(`[CHUNKER] DONE: ${chunkCount} chunk(s) for "${title}" (${formatBytes(totalSize)})`);
-  return { chunkCount, totalSize };
+  return { chunkCount, totalSize, fileIds };
 }
 
 /**

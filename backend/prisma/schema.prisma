@@ -69,6 +69,11 @@ model Movie {
   magnetLink       String?      // magnet URI — stored when queued for the torrent worker
   status           String       @default("pending") // pending | queued | caching | ready | failed
   lastError        String?      // human-readable reason for the last 'failed' status
+  telegramFileIds  String?      // JSON array of Telegram file_ids for ALL parts of the
+                                // movie, in order — e.g. '["id_part1","id_part2"]'.
+                                // Written by the chunker when every part is uploaded;
+                                // lets the API/frontend handle multi-part downloads
+                                // without re-querying the MovieChunk rows.
   lastDownloadedAt DateTime     @default(now()) // touched on every download request
   createdAt        DateTime     @default(now())
   chunks           MovieChunk[]

@@ -7,18 +7,32 @@
 //                                         (also mounted standalone at /api/download/:id)
 //
 // The download endpoint has two modes:
-//   Default:  JSON { success, downloadUrl: "/api/download/:id?dl=1", ... }
-//   ?dl=1:    streams all chunks sequentially as one continuous file
-//             with Content-Disposition: attachment — Telegram is invisible.
+//   Default:  JSON { success, downloadUrl, parts?, telegramFileIds, ... }
+//             — for multi-part movies, `parts` lists every Telegram part
+//             with its own downloadUrl (…?dl=1&part=N) so the frontend can
+//             render "Download Part 1", "Download Part 2", … buttons.
+//   ?dl=1:    streams chunks as attachment(s) — ALL parts concatenated into
+//             one continuous file by default, or a single part with ?part=N.
+//             Telegram is invisible either way.
 // ==============================================================================
 import { pipeline } from 'stream/promises';
 import express from 'express';
 import prisma from '../prisma/client.js';
 import { startCacheJob, peekCacheEntry, getCacheStats, cacheMovie, resetMovieForRetry } from './hybridCache.js';
-import { createChunkStream } from './chunker.js';
+import { createChunkStream, buildPartFileName } from './chunker.js';
 import { formatBytes } from './config.js';
 
 const router = express.Router();
+
+/** Safely parse the Movie.telegramFileIds JSON column into an array of strings. */
+function parseTelegramFileIds(json) {
+  try {
+    const value = JSON.parse(json);
+    return Array.isArray(value) ? value.filter((id) => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
 
 const httpStatus = (err, fallback = 500) =>
   err && Number.isInteger(err.statusCode) ? err.statusCode : fallback;
@@ -151,39 +165,81 @@ async function handleDownload(req, res) {
 
     const fileName = movie.fileName || `${movie.title}.mp4`;
 
-    if (isStreamMode) {
-      // ---- STREAM MODE: pipe all chunks sequentially into the response
-      const chunks = await prisma.movieChunk.findMany({
-        where: { movieId: movie.id },
-        orderBy: { chunkIndex: 'asc' },
-      });
+    // Load the ordered chunks once — both stream modes need them.
+    const chunks = await prisma.movieChunk.findMany({
+      where: { movieId: movie.id },
+      orderBy: { chunkIndex: 'asc' },
+    });
+    if (chunks.length === 0) {
+      return res.status(409).json({ success: false, message: 'No chunks found for this movie.' });
+    }
 
-      if (chunks.length === 0) {
-        return res.status(409).json({ success: false, message: 'No chunks found for this movie.' });
+    if (isStreamMode) {
+      // ---- STREAM MODE
+      // ?part=N (1-based): stream ONLY that Telegram part — used by the
+      // frontend's "Download Part N" buttons for multi-part movies.
+      // Without ?part: stream ALL parts concatenated into one continuous file.
+      const partNumber = parseInt(req.query.part, 10);
+      const wantsSinglePart = Number.isInteger(partNumber) && partNumber >= 1;
+
+      if (wantsSinglePart && partNumber > chunks.length) {
+        return res.status(404).json({
+          success: false,
+          message: `Part ${partNumber} does not exist — this movie has ${chunks.length} part(s).`,
+        });
       }
 
-      const totalSize = chunks.reduce((sum, c) => sum + c.chunkSize, 0);
+      const streamChunks = wantsSinglePart ? [chunks[partNumber - 1]] : chunks;
+      const totalSize = streamChunks.reduce((sum, c) => sum + c.chunkSize, 0);
+      const outFileName = wantsSinglePart
+        ? buildPartFileName(fileName, partNumber - 1, chunks.length)
+        : fileName;
 
       res.setHeader('Content-Type', movie.mimeType || 'video/mp4');
-      res.setHeader('Content-Disposition', `attachment; filename="${fileName.replace(/[^\w.\- ]/g, '_')}"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${outFileName.replace(/[^\w.\- ]/g, '_')}"`);
       res.setHeader('Content-Length', String(totalSize));
 
-      console.log(`[CDN_API] Streaming "${movie.title}" (${chunks.length} chunks, ${formatBytes(totalSize)})`);
+      console.log(
+        `[CDN_API] Streaming "${movie.title}"` +
+          (wantsSinglePart ? ` part ${partNumber}/${chunks.length}` : ` (${chunks.length} part(s) concatenated)`) +
+          ` (${formatBytes(totalSize)})`
+      );
 
-      const source = createChunkStream(chunks);
+      const source = createChunkStream(streamChunks);
       await pipeline(source, res);
       console.log(`[CDN_API] Stream complete for "${movie.title}"`);
       return;
     }
 
-    // ---- JSON MODE: return metadata with the streaming URL
+    // ---- JSON MODE: return metadata + the streaming URL(s)
     const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
     const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost';
+
+    // Multi-part movies: expose every Telegram part individually so the
+    // frontend can offer "Download Part 1", "Download Part 2", … buttons.
+    const parts = chunks.map((chunk, idx) => ({
+      part: idx + 1,
+      fileName: buildPartFileName(fileName, idx, chunks.length),
+      sizeBytes: chunk.chunkSize,
+      sizeReadable: formatBytes(chunk.chunkSize),
+      fileId: chunk.telegramFileId,
+      downloadUrl: `${proto}://${host}/api/download/${movie.id}?dl=1&part=${idx + 1}`,
+    }));
+
+    // Prefer the chunker-persisted array; fall back to the chunk rows so
+    // movies cached before the telegramFileIds column existed still work.
+    const persistedFileIds = parseTelegramFileIds(movie.telegramFileIds);
+    const telegramFileIds = persistedFileIds.length > 0
+      ? persistedFileIds
+      : chunks.map((c) => c.telegramFileId);
 
     return res.json({
       success: true,
       cached: true,
       downloadUrl: `${proto}://${host}/api/download/${movie.id}?dl=1`,
+      parts,
+      chunkCount: chunks.length,
+      telegramFileIds,
       movieId: movie.id,
       title: movie.title,
       fileName,
