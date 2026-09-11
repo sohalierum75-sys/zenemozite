@@ -530,7 +530,7 @@ const SingleTV = () => {
                                       backend Telegram CDN worker (VPS keeps caching regardless). */}
                                   <div className="mt-3">
                                     <a
-                                      href={`https://webtor.io/#${encodeURIComponent(torrent.url)}`}
+                                      href={`https://webtor.io/${torrent.url}`}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       onClick={() => {

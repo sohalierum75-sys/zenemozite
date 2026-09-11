@@ -24,18 +24,30 @@ const DownloadButton = ({ movieId, magnetLink, title, label = 'Download', classN
   const [opened, setOpened] = useState(false);
 
   /**
-   * webtor.io deep link: the magnet URI (or .torrent URL) is appended as a
-   * URL HASH fragment — `https://webtor.io/#<encoded-target>` — which
-   * webtor.io's client-side app reads to auto-start processing the torrent.
-   * A hash is used instead of a query string (?magnet=...) because query
-   * params only reach webtor.io's home page, while the hash is captured by
-   * their frontend app and triggers the immediate search/processing flow.
-   * encodeURIComponent escapes every reserved character (&, ?, #, +, spaces…)
-   * so the magnet never breaks out of the fragment.
+   * webtor.io deep link — the OFFICIAL format, taken from webtor.io's own
+   * open-source frontend (github.com/webtor-io/web-ui, MIT):
+   *
+   *   handlers/resource/handler.go:  GET /:resource_id -> if the path starts
+   *                                  with "magnet", the magnet-loading flow runs
+   *   handlers/resource/post.go:     query = TrimPrefix(path, "/") + RawQuery
+   *                                  (doc comment shows "/magnet:?xt=...")
+   *
+   * So the magnet URI is appended to the site root VERBATIM:
+   *
+   *   https://webtor.io/magnet:?xt=urn:btih:...&dn=...&tr=...
+   *
+   * The magnet's own "?" becomes the URL query separator, letting the server
+   * reassemble the exact magnet and start searching/loading it instantly.
+   * DO NOT encodeURIComponent the whole magnet here — encoding "?" and "&"
+   * would keep them inside the path and break the server-side reconstruction.
+   * A valid magnet URI is already percent-encoded per the magnet spec.
    */
   const buildWebtorUrl = () => {
     if (!magnetLink) return WEBTOR_URL;
-    return `${WEBTOR_URL}#${encodeURIComponent(magnetLink)}`;
+    if (magnetLink.startsWith('magnet:')) return `${WEBTOR_URL}${magnetLink}`;
+    // Non-magnet targets (.torrent URLs) have no direct deep link on
+    // webtor.io's public frontend — fall back to the home page.
+    return WEBTOR_URL;
   };
 
   /**
