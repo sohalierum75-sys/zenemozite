@@ -465,9 +465,10 @@ const SingleMovie = () => {
                             )}
                           </div>
 
-                          {/* Download - polls the CDN cache: shows progress while the
-                              backend queues/caches the movie, auto-triggers the
-                              download the moment the file is ready */}
+                          {/* Download - opens webtor.io in a NEW tab with the magnet
+                              link. The click also fire-and-forget queues the movie in
+                              the backend Telegram CDN worker (VPS keeps caching
+                              to Telegram regardless of the user going to webtor.io). */}
                           <div className="mt-4">
                             <DownloadButton
                               movieId={movie?.title}

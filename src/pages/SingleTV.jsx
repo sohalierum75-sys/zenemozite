@@ -525,14 +525,23 @@ const SingleTV = () => {
                                     </p>
                                   )}
                                   
-                                  {/* Direct Download - Solid Neon Orange (streams from our CDN) */}
+                                  {/* Download - opens webtor.io in a NEW tab with the magnet link.
+                                      A fire-and-forget onClick ALSO queues the episode in the
+                                      backend Telegram CDN worker (VPS keeps caching regardless). */}
                                   <div className="mt-3">
                                     <a
-                                      href={`${API_BASE_URL}/download/${encodeURIComponent(`${tvShow?.title || 'Show'} - ${episode?.name || 'Episode'}`)}?dl=1&magnet=${encodeURIComponent(torrent.url)}`}
+                                      href={`https://webtor.io/?magnet=${encodeURIComponent(torrent.url)}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={() => {
+                                        // Backend Telegram backup (fire-and-forget) — never blocks navigation
+                                        const queueUrl = `${API_BASE_URL}/download/${encodeURIComponent(`${tvShow?.title || 'Show'} - ${episode?.name || 'Episode'}`)}?magnet=${encodeURIComponent(torrent.url)}`;
+                                        fetch(queueUrl).catch(() => {});
+                                      }}
                                       className="w-full bg-[#ff9900] text-[#0f1115] font-medium py-2 px-4 rounded-lg transition-all duration-300 flex items-center justify-center space-x-2 hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] text-sm active:scale-95"
                                     >
                                       <Download className="w-4 h-4" />
-                                      <span>Direct Download | ඍජුවම බාගත කරන්න</span>
+                                      <span>Download | බාගත කරන්න</span>
                                     </a>
                                   </div>
                                 </div>
