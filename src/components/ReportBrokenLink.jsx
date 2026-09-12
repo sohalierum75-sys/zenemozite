@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Loader2, AlertCircle, CheckCircle2, Wrench, RotateCcw } from 'lucide-react';
+import { useLocale } from '../context/LocaleContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
@@ -29,6 +30,7 @@ const ReportBrokenLink = ({
   mediaType = 'movie',
   onLinkReplaced
 }) => {
+  const { isLk } = useLocale();
   const [status, setStatus] = useState('idle'); // idle | reporting | success | error
   const [stageIndex, setStageIndex] = useState(0);
   const [error, setError] = useState(null);
@@ -104,7 +106,7 @@ const ReportBrokenLink = ({
           className="flex-shrink-0 w-full sm:w-auto bg-[#252833]/80 backdrop-blur-md border border-white/10 text-white font-bold py-3 px-6 rounded-xl transition-all duration-300 flex items-center justify-center space-x-2 hover:bg-[#323644]/80 hover:border-[var(--accent)]/40 hover:-translate-y-1 active:scale-95"
         >
           <Wrench className="w-5 h-5" />
-          <span>Report Broken Link | කැඩුණු සබැඳිය වාර්තා කරන්න</span>
+          <span>{isLk ? 'Report Broken Link | කැඩුණු සබැඳිය වාර්තා කරන්න' : 'Report Broken Link'}</span>
         </button>
       </div>
     );
@@ -116,7 +118,7 @@ const ReportBrokenLink = ({
       <div className="mt-6 glass-card rounded-xl p-8 text-center">
         <Loader2 className="w-12 h-12 text-[var(--accent)] animate-spin mx-auto mb-4" />
         <h4 className="text-xl font-bold text-white mb-2">
-          Fixing your link... | සබැඳිය නිවැරදි කරමින්...
+          {isLk ? 'Fixing your link... | සබැඳිය නිවැරදි කරමින්...' : 'Fixing your link...'}
         </h4>
         <p className="text-[#8b94a6]">{LOADING_STAGES[stageIndex]}</p>
         <p className="text-[#8b94a6] text-xs mt-4">
@@ -160,7 +162,7 @@ const ReportBrokenLink = ({
           className="flex-shrink-0 w-full sm:w-auto bg-[#252833]/80 backdrop-blur-md border border-white/10 text-white font-bold py-3 px-6 rounded-xl transition-all duration-300 flex items-center justify-center space-x-2 hover:bg-[#323644]/80 hover:border-[var(--accent)]/40 active:scale-95"
         >
           <RotateCcw className="w-5 h-5" />
-          <span>Try Again | නැවත උත්සාහ කරන්න</span>
+          <span>{isLk ? 'Try Again | නැවත උත්සාහ කරන්න' : 'Try Again'}</span>
         </button>
       </div>
     </div>

@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, NavLink, useLocation } from 'react-router-dom';
 import { Film, Search, Home, Tv, Menu, X } from 'lucide-react';
+import { useLocale } from '../context/LocaleContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
 const Navbar = () => {
+  const { isLk } = useLocale();
   const [searchQuery, setSearchQuery] = useState('');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
@@ -150,7 +152,7 @@ const Navbar = () => {
               }`}
             >
               <Home className="w-4 h-4" />
-              <span>Hollywood | ඉංග්‍රීසි</span>
+              <span>{isLk ? 'Hollywood | ඉංග්‍රීසි' : 'Hollywood'}</span>
             </Link>
             <Link 
               to="/tamil" 
@@ -159,7 +161,7 @@ const Navbar = () => {
               }`}
             >
               <Film className="w-4 h-4" />
-              <span>Tamil & Malayalam | දකුණු ඉන්දීය</span>
+              <span>{isLk ? 'Tamil & Malayalam | දකුණු ඉන්දීය' : 'Tamil & Malayalam'}</span>
             </Link>
             <Link 
               to="/tv-shows" 
@@ -168,7 +170,7 @@ const Navbar = () => {
               }`}
             >
               <Tv className="w-4 h-4" />
-              <span>TV Shows | ටීවී කතාමාලා</span>
+              <span>{isLk ? 'TV Shows | ටීවී කතාමාලා' : 'TV Shows'}</span>
             </Link>
           </div>
 
@@ -355,7 +357,7 @@ const Navbar = () => {
               onClick={() => setIsMobileMenuOpen(false)}
             >
               <Home className="w-5 h-5" />
-              <span>Hollywood | ඉංග්‍රීසි</span>
+              <span>{isLk ? 'Hollywood | ඉංග්‍රීසි' : 'Hollywood'}</span>
             </NavLink>
             <NavLink
               to="/tamil"
@@ -367,7 +369,7 @@ const Navbar = () => {
               onClick={() => setIsMobileMenuOpen(false)}
             >
               <Film className="w-5 h-5" />
-              <span>Tamil & Malayalam | දකුණු ඉන්දීය</span>
+              <span>{isLk ? 'Tamil & Malayalam | දකුණු ඉන්දීය' : 'Tamil & Malayalam'}</span>
             </NavLink>
             <NavLink
               to="/tv-shows"
@@ -379,7 +381,7 @@ const Navbar = () => {
               onClick={() => setIsMobileMenuOpen(false)}
             >
               <Tv className="w-5 h-5" />
-              <span>TV Shows | ටීවී කතාමාලා</span>
+              <span>{isLk ? 'TV Shows | ටීවී කතාමාලා' : 'TV Shows'}</span>
             </NavLink>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, ChevronDown, MessageSquare } from 'lucide-react';
+import { useLocale } from '../context/LocaleContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
@@ -11,6 +12,7 @@ const DEFAULT_EPISODE_STILL = 'https://via.placeholder.com/533x300/1a1d29/8b94a6
 const SingleTV = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { isLk } = useLocale();
   const [tvShow, setTVShow] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -122,7 +124,7 @@ const SingleTV = () => {
         <div className="text-center">
           <div className="h-16 w-16 animate-spin rounded-full border-2 border-white/10 border-t-[var(--accent)] mx-auto mb-4" />
           <p className="text-white text-xl font-semibold">Loading TV show details...</p>
-          <p className="text-[#8b94a6] text-sm mt-2">විස්තර ලබා ගනිමින් පවතී...</p>
+          {isLk && <p className="text-[#8b94a6] text-sm mt-2">විස්තර ලබා ගනිමින් පවතී...</p>}
         </div>
       </div>
     );
@@ -134,7 +136,7 @@ const SingleTV = () => {
         <div className="text-center max-w-md">
           <AlertCircle className="w-16 h-16 text-[var(--accent)] mx-auto mb-4" />
           <h2 className="text-2xl font-extrabold text-white mb-2">TV Show Not Found</h2>
-          <h3 className="text-xl text-[#8b94a6] mb-4">කතාමාලාව හමු නොවිණි</h3>
+          {isLk && <h3 className="text-xl text-[#8b94a6] mb-4">කතාමාලාව හමු නොවිණි</h3>}
           <p className="text-[#8b94a6] mb-6">
             {error || 'The TV show you are looking for is not available.'}
           </p>
@@ -142,7 +144,7 @@ const SingleTV = () => {
             to="/tv-shows" 
             className="inline-block bg-[var(--accent)] text-[#0f1115] font-bold px-6 py-3 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg shadow-[var(--accent)]/20 active:scale-95"
           >
-            Browse TV Shows | කතාමාලා බලන්න
+            Browse TV Shows{isLk ? ' | කතාමාලා බලන්න' : ''}
           </Link>
         </div>
       </div>
@@ -161,7 +163,7 @@ const SingleTV = () => {
           className="inline-flex items-center space-x-2 text-[#8b94a6] hover:text-[var(--accent)] transition-accent"
         >
           <ChevronLeft className="w-5 h-5" />
-          <span>Back | ආපසු</span>
+          <span>{isLk ? 'Back | ආපසු' : 'Back'}</span>
         </button>
       </div>
 
@@ -408,7 +410,9 @@ const SingleTV = () => {
                 </div>
               </div>
 
-              {/* Sinhala Subtitles Search Button */}
+              {/* Sinhala Subtitles Search Button — only rendered for visitors in Sri Lanka (LK).
+                  All other countries (and geo-detection failures) get the English-only UI. */}
+              {isLk && (
               <div className="mb-6">
                 <a
                   href={`https://www.baiscope.lk/?s=${encodeURIComponent(tvShow?.title || '')}+S${selectedSeason.toString().padStart(2, '0')}`}
@@ -420,6 +424,7 @@ const SingleTV = () => {
                   <span>Sinhala Subtitles for Season {selectedSeason} | සිංහල උපසිරැසි</span>
                 </a>
               </div>
+              )}
 
               {/* Episodes List */}
               {episodesLoading ? (
@@ -541,7 +546,7 @@ const SingleTV = () => {
                                       className="w-full bg-[#ff9900] text-[#0f1115] font-medium py-2 px-4 rounded-lg transition-all duration-300 flex items-center justify-center space-x-2 hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] text-sm active:scale-95"
                                     >
                                       <Download className="w-4 h-4" />
-                                      <span>Download | බාගත කරන්න</span>
+                                      <span>{isLk ? 'Download | බාගත කරන්න' : 'Download'}</span>
                                     </a>
                                   </div>
                                 </div>
@@ -553,7 +558,7 @@ const SingleTV = () => {
                                 <AlertCircle className="w-5 h-5 text-[#8b94a6] flex-shrink-0" />
                                 <div>
                                   <p className="text-white font-semibold text-sm">Links Not Available (0 Seeders)</p>
-                                  <p className="text-[#8b94a6] text-xs">දැනට ලින්ක්ස් නොමැත</p>
+                                  {isLk && <p className="text-[#8b94a6] text-xs">දැනට ලින්ක්ස් නොමැත</p>}
                                 </div>
                               </div>
                               

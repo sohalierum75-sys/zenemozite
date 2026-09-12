@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Tv, Star, Clock, Calendar, Loader2, AlertCircle, ChevronRight } from 'lucide-react';
 import HeroBanner from '../components/HeroBanner';
+import { useLocale } from '../context/LocaleContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
 const TVShows = () => {
+  const { isLk } = useLocale();
   const [shows, setShows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -62,7 +64,7 @@ const TVShows = () => {
         <div className="text-center">
           <Loader2 className="w-16 h-16 text-orange-500 animate-spin mx-auto mb-4" />
           <p className="text-slate-200 text-xl">Loading TV shows...</p>
-          <p className="text-slate-400 text-sm mt-2">ටීවී කතාමාලා පූරණය වෙමින්...</p>
+          {isLk && <p className="text-slate-400 text-sm mt-2">ටීවී කතාමාලා පූරණය වෙමින්...</p>}
         </div>
       </div>
     );
@@ -74,13 +76,13 @@ const TVShows = () => {
         <div className="text-center max-w-md">
           <AlertCircle className="w-16 h-16 text-orange-500 mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-slate-200 mb-2">Connection Error</h2>
-          <h3 className="text-xl text-slate-300 mb-4">සම්බන්ධතා ගැටලුවක්</h3>
+          {isLk && <h3 className="text-xl text-slate-300 mb-4">සම්බන්ධතා ගැටලුවක්</h3>}
           <p className="text-slate-400 mb-6">{error}</p>
           <button 
             onClick={() => fetchTVShows(1, false)}
             className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold px-6 py-3 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-lg"
           >
-            Try Again | නැවත උත්සාහ කරන්න
+            Try Again{isLk ? ' | නැවත උත්සාහ කරන්න' : ''}
           </button>
         </div>
       </div>
@@ -100,7 +102,7 @@ const TVShows = () => {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h2 className="text-3xl font-bold text-white mb-2">Popular Series</h2>
-            <p className="text-slate-400">ජනප්‍රිය කතාමාලා</p>
+            {isLk && <p className="text-slate-400">ජනප්‍රිය කතාමාලා</p>}
           </div>
           <div className="backdrop-blur-md bg-slate-900/50 border border-slate-700/50 px-4 py-2 rounded-lg">
             <p className="text-orange-500 font-bold">{shows.length} Shows</p>
@@ -192,12 +194,12 @@ const TVShows = () => {
           <div className="text-center py-20 backdrop-blur-md bg-slate-900/50 border border-slate-700/50 rounded-2xl">
             <Tv className="w-16 h-16 text-slate-600 mx-auto mb-4" />
             <h3 className="text-xl font-bold text-slate-400 mb-2">No TV shows found</h3>
-            <p className="text-slate-500 mb-6">ටීවී කතාමාලා හමු නොවිණි</p>
+            <p className="text-slate-500 mb-6">{isLk ? 'ටීවී කතාමාලා හමු නොවිණි' : ''}</p>
             <button
               onClick={() => fetchTVShows(1, false)}
               className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold px-6 py-3 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-lg"
             >
-              Refresh | නැවුම් කරන්න
+              Refresh{isLk ? ' | නැවුම් කරන්න' : ''}
             </button>
           </div>
         )}
@@ -218,7 +220,7 @@ const TVShows = () => {
               ) : (
                 <>
                   <ChevronRight className="w-5 h-5" />
-                  <span>Load More Shows | තවත් කතාමාලා</span>
+                  <span>{isLk ? 'Load More Shows | තවත් කතාමාලා' : 'Load More Shows'}</span>
                 </>
               )}
             </button>
@@ -234,7 +236,7 @@ const TVShows = () => {
               <p className="text-slate-300 text-sm leading-relaxed">
                 Stream popular TV series directly in your browser using Vidsrc. The player defaults to Season 1, Episode 1, 
                 but you can navigate to other seasons and episodes within the embedded player. Season pack torrents are available 
-                for download when found. Use the Sinhala subtitle search button on each show page to find subtitles.
+                for download when found.{isLk ? ' Use the Sinhala subtitle search button on each show page to find subtitles.' : ''}
               </p>
             </div>
           </div>

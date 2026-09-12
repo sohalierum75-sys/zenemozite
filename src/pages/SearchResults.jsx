@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Search, AlertCircle, Star, ArrowLeft, Film, Tv } from 'lucide-react';
+import { useLocale } from '../context/LocaleContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
@@ -112,6 +113,7 @@ const SkeletonCard = ({ index = 0 }) => (
 const SearchResults = () => {
   const { query } = useParams();
   const navigate = useNavigate();
+  const { isLk } = useLocale();
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -161,7 +163,7 @@ const SearchResults = () => {
         <div className="text-center">
           <div className="h-16 w-16 animate-spin rounded-full border-2 border-white/10 border-t-[var(--accent)] mx-auto mb-4" />
           <p className="text-white text-xl font-semibold animate-fadeInUp">Searching...</p>
-          <p className="text-[#8b94a6] text-sm mt-2 animate-fadeInUp stagger-1">සොයමින් පවතී...</p>
+          {isLk && <p className="text-[#8b94a6] text-sm mt-2 animate-fadeInUp stagger-1">සොයමින් පවතී...</p>}
         </div>
       </div>
     );
@@ -173,13 +175,13 @@ const SearchResults = () => {
         <div className="text-center max-w-md">
           <AlertCircle className="w-16 h-16 text-[var(--accent)] mx-auto mb-4 animate-fadeInUp" />
           <h2 className="text-2xl font-extrabold text-white mb-2 animate-fadeInUp stagger-1">Search Failed</h2>
-          <h3 className="text-xl text-[#8b94a6] mb-4 animate-fadeInUp stagger-2">සෙවීම අසාර්ථක විය</h3>
+          {isLk && <h3 className="text-xl text-[#8b94a6] mb-4 animate-fadeInUp stagger-2">සෙවීම අසාර්ථක විය</h3>}
           <p className="text-[#8b94a6] mb-6 animate-fadeInUp stagger-3">{error}</p>
           <button
             onClick={() => navigate('/')}
             className="bg-[var(--accent)] text-[#0f1115] font-bold px-6 py-3 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg shadow-[var(--accent)]/20 animate-fadeInUp stagger-4"
           >
-            Back to Home | ආපසු
+            Back to Home{isLk ? ' | ආපසු' : ''}
           </button>
         </div>
       </div>
@@ -197,7 +199,7 @@ const SearchResults = () => {
             className="flex items-center space-x-2 text-[#8b94a6] hover:text-[var(--accent)] transition-accent mb-6 animate-fadeInUp"
           >
             <ArrowLeft className="w-5 h-5" />
-            <span>Back | ආපසු</span>
+            <span>{isLk ? 'Back | ආපසු' : 'Back'}</span>
           </button>
 
           {/* Search Title */}
@@ -205,9 +207,11 @@ const SearchResults = () => {
             <h1 className="text-4xl md:text-5xl font-extrabold text-white mb-2 tracking-tight animate-fadeInUp stagger-1">
               Search Results
             </h1>
-            <h2 className="text-2xl md:text-3xl font-extrabold text-[#8b94a6] mb-4 animate-fadeInUp stagger-2">
-              සෙවුම් ප්‍රතිඵල
-            </h2>
+            {isLk && (
+              <h2 className="text-2xl md:text-3xl font-extrabold text-[#8b94a6] mb-4 animate-fadeInUp stagger-2">
+                සෙවුම් ප්‍රතිඵල
+              </h2>
+            )}
             <div className="flex items-center space-x-3 animate-fadeInUp stagger-3">
               <Search className="w-6 h-6 text-[var(--accent)] transition-accent" />
               <p className="text-white text-xl">
@@ -246,7 +250,7 @@ const SearchResults = () => {
             <div className="glass-card max-w-md mx-auto p-12 rounded-2xl">
               <Search className="w-20 h-20 text-[#8b94a6] mx-auto mb-6 opacity-50" />
               <h2 className="text-2xl font-bold text-white mb-2">No Results Found</h2>
-              <h3 className="text-xl text-[#8b94a6] mb-4">ප්‍රතිඵල හමු නොවීය</h3>
+              {isLk && <h3 className="text-xl text-[#8b94a6] mb-4">ප්‍රතිඵල හමු නොවීය</h3>}
               <p className="text-[#8b94a6] mb-8">
                 We couldn't find any movies or TV shows matching "<span className="text-white font-semibold">{decodeURIComponent(query)}</span>".
               </p>
@@ -262,7 +266,7 @@ const SearchResults = () => {
                 onClick={() => navigate('/')}
                 className="mt-8 bg-[var(--accent)] text-[#0f1115] font-bold px-6 py-3 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg shadow-[var(--accent)]/20"
               >
-                Browse All Movies | සියලුම චිත්‍රපට
+                Browse All Movies{isLk ? ' | සියලුම චිත්‍රපට' : ''}
               </button>
             </div>
           </div>

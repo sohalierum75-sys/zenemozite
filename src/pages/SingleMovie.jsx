@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, Search, MessageSquare } from 'lucide-react';
 import ReportBrokenLink from '../components/ReportBrokenLink';
 import DownloadButton from '../components/DownloadButton';
+import { useLocale } from '../context/LocaleContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
@@ -11,6 +12,7 @@ const DEFAULT_BACKDROP = 'https://via.placeholder.com/1920x1080/0f1115/8b94a6?te
 
 const SingleMovie = () => {
   const { id } = useParams();
+  const { isLk } = useLocale();
   const [movie, setMovie] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -112,7 +114,7 @@ const SingleMovie = () => {
         <div className="text-center">
           <div className="h-16 w-16 animate-spin rounded-full border-2 border-white/10 border-t-[var(--accent)] mx-auto mb-4" />
           <p className="text-white text-xl font-semibold">Loading movie details...</p>
-          <p className="text-[#8b94a6] text-sm mt-2">විස්තර ලබා ගනිමින් පවතී...</p>
+          {isLk && <p className="text-[#8b94a6] text-sm mt-2">විස්තර ලබා ගනිමින් පවතී...</p>}
         </div>
       </div>
     );
@@ -124,7 +126,7 @@ const SingleMovie = () => {
         <div className="text-center max-w-md">
           <AlertCircle className="w-16 h-16 text-[var(--accent)] mx-auto mb-4" />
           <h2 className="text-2xl font-extrabold text-white mb-2">Movie Not Found</h2>
-          <h3 className="text-xl text-[#8b94a6] mb-4">චිත්‍රපටය හමු නොවිණි</h3>
+          {isLk && <h3 className="text-xl text-[#8b94a6] mb-4">චිත්‍රපටය හමු නොවිණි</h3>}
           <p className="text-[#8b94a6] mb-6">
             {error || 'The movie you are looking for is not available.'}
           </p>
@@ -132,7 +134,7 @@ const SingleMovie = () => {
             to="/" 
             className="inline-block bg-[var(--accent)] text-[#0f1115] font-bold px-6 py-3 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg shadow-[var(--accent)]/20 active:scale-95"
           >
-            Return to Home | මුල් පිටුවට යන්න
+            Return to Home{isLk ? ' | මුල් පිටුවට යන්න' : ''}
           </Link>
         </div>
       </div>
@@ -147,7 +149,7 @@ const SingleMovie = () => {
         <div className="text-center max-w-md">
           <AlertCircle className="w-16 h-16 text-[var(--accent)] mx-auto mb-4" />
           <h2 className="text-2xl font-extrabold text-white mb-2">Invalid Movie Data</h2>
-          <h3 className="text-xl text-[#8b94a6] mb-4">වලංගු නොවන දත්ත</h3>
+          {isLk && <h3 className="text-xl text-[#8b94a6] mb-4">වලංගු නොවන දත්ත</h3>}
           <p className="text-[#8b94a6] mb-6">
             The movie data is incomplete or invalid.
           </p>
@@ -155,7 +157,7 @@ const SingleMovie = () => {
             to="/" 
             className="inline-block bg-[var(--accent)] text-[#0f1115] font-bold px-6 py-3 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg shadow-[var(--accent)]/20 active:scale-95"
           >
-            Return to Home | මුල් පිටුවට යන්න
+            Return to Home{isLk ? ' | මුල් පිටුවට යන්න' : ''}
           </Link>
         </div>
       </div>
@@ -403,10 +405,12 @@ const SingleMovie = () => {
                 <span>{movie?.is_tv ? 'Download Season Packs' : 'Download Movie'}</span>
               </h3>
               <h4 className="text-xl font-bold text-[#8b94a6] mb-4">
-                {movie?.is_tv ? 'කතාමාලා බාගත කරන්න' : 'චිත්‍රපටය බාගත කරන්න'}
+                {isLk && (movie?.is_tv ? 'කතාමාලා බාගත කරන්න' : 'චිත්‍රපටය බාගත කරන්න')}
               </h4>
 
-              {/* Sinhala Subtitles Search Button */}
+              {/* Sinhala Subtitles Search Button — only rendered for visitors in Sri Lanka (LK).
+                  All other countries (and geo-detection failures) get the English-only UI. */}
+              {isLk && (
               <div className="mb-6">
                 <a
                   href={`https://www.baiscope.lk/?s=${encodeURIComponent(movie?.title || '')}`}
@@ -421,6 +425,7 @@ const SingleMovie = () => {
                   Search for Sinhala subtitles on Baiscope
                 </p>
               </div>
+              )}
 
               {hasTorrents ? (
                 <div>
@@ -474,7 +479,7 @@ const SingleMovie = () => {
                               movieId={movie?.title}
                               title={movie?.title}
                               magnetLink={torrent.url}
-                              label="Download | බාගත කරන්න"
+                              label={isLk ? 'Download | බාගත කරන්න' : 'Download'}
                               className="w-full bg-[#ff9900] text-[#0f1115] hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] hover:-translate-y-1"
                             />
                           </div>
@@ -507,7 +512,7 @@ const SingleMovie = () => {
                 <div className="glass-card rounded-xl p-8 text-center">
                   <AlertCircle className="w-16 h-16 text-[#8b94a6] mx-auto mb-4" />
                   <h4 className="text-xl font-bold text-white mb-2">Links not available right now</h4>
-                  <h5 className="text-lg font-bold text-[#8b94a6] mb-4">දැනට බාගත කිරීමේ පහසුකම් නොමැත</h5>
+                  {isLk && <h5 className="text-lg font-bold text-[#8b94a6] mb-4">දැනට බාගත කිරීමේ පහසුකම් නොමැත</h5>}
                   <p className="text-[#8b94a6] mb-6">
                     Please check back later or search manually.
                   </p>
@@ -530,7 +535,7 @@ const SingleMovie = () => {
                     className="inline-flex items-center space-x-2 bg-[var(--accent)] text-[#0f1115] font-bold px-6 py-3 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg shadow-[var(--accent)]/20 active:scale-95"
                   >
                     <Search className="w-5 h-5" />
-                    <span>Search Manually | අතින් සොයන්න</span>
+                    <span>{isLk ? 'Search Manually | අතින් සොයන්න' : 'Search Manually'}</span>
                   </a>
                 </div>
               )}

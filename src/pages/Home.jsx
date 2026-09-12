@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Loader2, AlertCircle, Star, Film, ChevronRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import HeroBanner from '../components/HeroBanner';
+import { useLocale } from '../context/LocaleContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
@@ -81,6 +82,7 @@ const SkeletonCard = ({ index = 0 }) => (
 );
 
 const Home = () => {
+  const { isLk } = useLocale();
   const [movies, setMovies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -154,7 +156,7 @@ const Home = () => {
         <div className="text-center">
           <div className="h-16 w-16 animate-spin rounded-full border-2 border-white/10 border-t-[var(--accent)] mx-auto mb-4" />
           <p className="text-white text-xl font-semibold animate-fadeInUp">Loading movies...</p>
-          <p className="text-[#8b94a6] text-sm mt-2 animate-fadeInUp stagger-1">චිත්‍රපට ලබා ගනිමින් පවතී...</p>
+          {isLk && <p className="text-[#8b94a6] text-sm mt-2 animate-fadeInUp stagger-1">චිත්‍රපට ලබා ගනිමින් පවතී...</p>}
         </div>
       </div>
     );
@@ -166,13 +168,13 @@ const Home = () => {
         <div className="text-center max-w-md">
           <AlertCircle className="w-16 h-16 text-[var(--accent)] mx-auto mb-4 animate-fadeInUp" />
           <h2 className="text-2xl font-extrabold text-white mb-2 animate-fadeInUp stagger-1">Unable to Load Movies</h2>
-          <h3 className="text-xl text-[#8b94a6] mb-4 animate-fadeInUp stagger-2">චිත්‍රපට පූරණය කළ නොහැකි විය</h3>
+          {isLk && <h3 className="text-xl text-[#8b94a6] mb-4 animate-fadeInUp stagger-2">චිත්‍රපට පූරණය කළ නොහැකි විය</h3>}
           <p className="text-[#8b94a6] mb-6 animate-fadeInUp stagger-3">Please check your connection and try again.</p>
           <button
             onClick={() => fetchMovies(1, false)}
             className="bg-[var(--accent)] text-[#0f1115] font-bold px-6 py-3 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg shadow-[var(--accent)]/20 animate-fadeInUp stagger-4"
           >
-            Try Again | නැවත උත්සාහ කරන්න
+            Try Again{isLk ? ' | නැවත උත්සාහ කරන්න' : ''}
           </button>
         </div>
       </div>
@@ -184,12 +186,12 @@ const Home = () => {
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <p className="text-white text-xl mb-2 animate-fadeInUp">No movies available right now.</p>
-          <p className="text-[#8b94a6] text-lg mb-6 animate-fadeInUp stagger-1">දැනට චිත්‍රපට නොමැත.</p>
+          {isLk && <p className="text-[#8b94a6] text-lg mb-6 animate-fadeInUp stagger-1">දැනට චිත්‍රපට නොමැත.</p>}
           <button
             onClick={() => fetchMovies(1, false)}
             className="bg-[var(--accent)] text-[#0f1115] font-bold px-6 py-3 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg shadow-[var(--accent)]/20 animate-fadeInUp stagger-2"
           >
-            Refresh | නැවුම් කරන්න
+            Refresh{isLk ? ' | නැවුම් කරන්න' : ''}
           </button>
         </div>
       </div>
@@ -211,7 +213,7 @@ const Home = () => {
             <Film className="w-10 h-10 text-[#ff9900]" />
             <span>Latest Movies</span>
           </h2>
-          <h3 className="text-3xl md:text-4xl font-extrabold text-[#8b94a6] mb-3 animate-fadeInUp stagger-1">අලුත්ම චිත්‍රපට</h3>
+          {isLk && <h3 className="text-3xl md:text-4xl font-extrabold text-[#8b94a6] mb-3 animate-fadeInUp stagger-1">අලුත්ම චිත්‍රපට</h3>}
           <p className="text-[#8b94a6] text-lg animate-fadeInUp stagger-2">
             Watch and download the newest movies
           </p>
@@ -257,12 +259,12 @@ const Home = () => {
               {loadingMore ? (
                 <>
                   <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/10 border-t-[#ff9900]" />
-                  <span>Loading... | ලබා ගනිමින්...</span>
+                  <span>{isLk ? 'Loading... | ලබා ගනිමින්...' : 'Loading...'}</span>
                 </>
               ) : (
                 <>
                   <ChevronRight className="w-5 h-5" />
-                  <span>Load More Movies | තවත් චිත්‍රපට</span>
+                  <span>{isLk ? 'Load More Movies | තවත් චිත්‍රපට' : 'Load More Movies'}</span>
                 </>
               )}
             </button>

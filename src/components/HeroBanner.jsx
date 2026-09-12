@@ -1,8 +1,10 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Play, Download, Info, Star } from 'lucide-react';
+import { useLocale } from '../context/LocaleContext';
 
 const HeroBanner = ({ media, mediaType = 'movie' }) => {
+  const { isLk } = useLocale();
   if (!media) return null;
 
   const title = media.title || media.name;
@@ -86,21 +88,21 @@ const HeroBanner = ({ media, mediaType = 'movie' }) => {
               className="bg-[#ff9900] text-[#0f1115] font-bold px-8 py-4 rounded-xl flex items-center justify-center space-x-2 transition-all duration-300 shadow-lg shadow-[#ff9900]/20 hover:scale-105"
             >
               <Play className="w-5 h-5 fill-current" />
-              <span>Watch Now | දැන් නරඹන්න</span>
+              <span>{isLk ? 'Watch Now | දැන් නරඹන්න' : 'Watch Now'}</span>
             </Link>
             <Link
               to={linkPath}
               className="bg-white/5 backdrop-blur-md hover:bg-white/10 text-white font-bold px-8 py-4 rounded-xl flex items-center justify-center space-x-2 transition-all duration-300 border border-white/10 hover:border-white/20"
             >
               <Download className="w-5 h-5" />
-              <span>Download | බාගත කරන්න</span>
+              <span>{isLk ? 'Download | බාගත කරන්න' : 'Download'}</span>
             </Link>
             <Link
               to={linkPath}
               className="bg-white/5 backdrop-blur-md hover:bg-white/10 text-white font-bold px-8 py-4 rounded-xl flex items-center justify-center space-x-2 transition-all duration-300 border border-white/10 hover:border-white/20"
             >
               <Info className="w-5 h-5" />
-              <span>More Info | තව විස්තර</span>
+              <span>{isLk ? 'More Info | තව විස්තර' : 'More Info'}</span>
             </Link>
           </div>
         </div>
