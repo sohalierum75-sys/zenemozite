@@ -1,9 +1,9 @@
 import express from 'express';
 import axios from 'axios';
 import cors from 'cors';
-import { PrismaClient } from '@prisma/client';
+import prisma from './prisma/client.js';
 import TorrentSearchApi from 'torrent-search-api';
-import hybridCacheRoutes, { downloadRouter } from './storage/routes.js';
+import hybridCacheRoutes, { downloadRouter, streamRouter } from './storage/routes.js';
 import { fetchAndCacheMovies, createTMDBListFetcher } from './listCache.js';
 import { startWorker } from './storage/worker.js';
 
@@ -39,10 +39,6 @@ try {
 
 console.log(`[MULTI_SOURCE] Enabled scraper providers: ${enabledProviders.join(', ')}`);
 
-// Initialize Prisma Client for persistent database storage
-const prisma = new PrismaClient({
-  log: ['error', 'warn'],
-});
 
 // Graceful Prisma shutdown
 process.on('SIGINT', async () => {
@@ -365,6 +361,8 @@ app.use(express.json());
 app.use('/api/hybrid-cache', hybridCacheRoutes);
 // Direct download endpoint for the frontend DownloadButton (GET /api/download/:movieId)
 app.use('/api/download', downloadRouter);
+// Direct GramJS MTProto Userbot streaming & Range request endpoint (GET /api/stream/:file_id)
+app.use('/api/stream', streamRouter);
 
 // Serve static files from React app in production
 import path from 'path';

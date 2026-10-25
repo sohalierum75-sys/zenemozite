@@ -69,9 +69,23 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          passphrase: ${{ secrets.SERVER_SSH_PASSPHRASE }}
           port: ${{ secrets.SERVER_PORT || 22 }}
           script: |
+            mkdir -p /opt/zenemozite
             cd /opt/zenemozite
+            
+            # Detect docker compose command (v2 plugin vs legacy docker-compose)
+            if docker compose version >/dev/null 2>&1; then
+              DC="docker compose"
+            elif command -v docker-compose >/dev/null 2>&1; then
+              DC="docker-compose"
+            else
+              echo "❌ Error: Docker Compose is not installed on this VPS."
+              exit 1
+            fi
+            echo "Using compose command: $DC"
             
             # Create docker-compose.yml if it doesn't exist
             cat > docker-compose.yml << 'EOF'
@@ -96,11 +110,13 @@ jobs:
                   # Telegram CDN — loaded from the VPS /opt/zenemozite/.env below
                   - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
                   - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+                  - TELEGRAM_API_ID=${TELEGRAM_API_ID:-23271365}
+                  - TELEGRAM_API_HASH=${TELEGRAM_API_HASH:-59a8393f1c17083798b42333d16ff224}
+                  - TELEGRAM_STRING_SESSION=${TELEGRAM_STRING_SESSION:-}
                   # Local Bot API server — resolved by Docker service name on the
                   # shared network (NOT localhost/172.17.0.1).
                   # NOTE: the backend appends /bot<token> itself; no /bot suffix.
                   - TELEGRAM_LOCAL_API_URL=${TELEGRAM_LOCAL_API_URL:-http://telegram-api:8081}
-                  # Low-RAM tuning: 512MB chunks + 1 torrent at a time prevent OOM crashes
                   # Low-RAM tuning: 512MB chunks + 1 torrent at a time prevent OOM crashes
                   - TELEGRAM_CHUNK_GB=${TELEGRAM_CHUNK_GB:-0.5}
                   - CDN_MAX_CONCURRENT=${CDN_MAX_CONCURRENT:-1}
@@ -186,40 +202,40 @@ jobs:
             
             # Stop and remove old container
             echo "Stopping old container..."
-            docker-compose down
+            $DC down
             
             # Start new container
             echo "Starting new container..."
-            docker-compose up -d
+            $DC up -d
             
             # Wait for container to be healthy
-            echo "Waiting for container to be healthy..."
+            echo "Waiting for container to initialize..."
             sleep 10
             
             # Check if container is running
-            if docker-compose ps | grep -q "zenemozite.*Up"; then
+            if $DC ps | grep -q "zenemozite.*Up"; then
               echo "✅ Deployment successful! Container is running."
             else
               echo "❌ Deployment failed! Container is not running."
-              docker-compose logs --tail=50
+              $DC logs --tail=50
               exit 1
             fi
             
             # Verify application health
             echo "Checking application health..."
             sleep 5
-            HEALTH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/status)
+            HEALTH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/status || echo "failed")
             
             if [ "$HEALTH_CHECK" = "200" ]; then
               echo "✅ Application is healthy and responding!"
             else
               echo "⚠️  Warning: Application health check returned $HEALTH_CHECK"
-              docker-compose logs --tail=30
+              $DC logs --tail=30
             fi
             
             # Clean up old images
             echo "Cleaning up old Docker images..."
-            docker image prune -af --filter "until=72h"
+            docker image prune -af --filter "until=72h" || true
             
             echo "🚀 Deployment completed successfully!"
       

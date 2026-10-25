@@ -21,6 +21,8 @@ import prisma from '../prisma/client.js';
 import { startCacheJob, peekCacheEntry, getCacheStats, cacheMovie, resetMovieForRetry } from './hybridCache.js';
 import { createChunkStream, buildPartFileName } from './chunker.js';
 import { formatBytes } from './config.js';
+import { resolveTelegramMedia, streamMediaToResponse } from './userbot.js';
+import { streamTorrentFile } from './torrentStream.js';
 
 const router = express.Router();
 
@@ -223,7 +225,9 @@ async function handleDownload(req, res) {
       sizeBytes: chunk.chunkSize,
       sizeReadable: formatBytes(chunk.chunkSize),
       fileId: chunk.telegramFileId,
+      messageId: chunk.telegramMessageId,
       downloadUrl: `${proto}://${host}/api/download/${movie.id}?dl=1&part=${idx + 1}`,
+      streamUrl: `${proto}://${host}/api/stream/${movie.id}?part=${idx + 1}`,
     }));
 
     // Prefer the chunker-persisted array; fall back to the chunk rows so
@@ -237,6 +241,7 @@ async function handleDownload(req, res) {
       success: true,
       cached: true,
       downloadUrl: `${proto}://${host}/api/download/${movie.id}?dl=1`,
+      streamUrl: `${proto}://${host}/api/stream/${movie.id}`,
       parts,
       chunkCount: chunks.length,
       telegramFileIds,
@@ -303,10 +308,169 @@ router.get('/stats', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Standalone router: mounted at /api/download in server.js
+// GET /stream/:file_id — Direct Stream / Download via GramJS MTProto Userbot
+//   Supports:
+//     - HTTP 206 Partial Content (Range requests: browser seeking & fast playback)
+//     - Zero-RAM direct socket piping with backpressure handling
+//     - Zero-Disk usage (never saved to VPS disk)
+//     - ?dl=1 / ?download=1: triggers attachment direct download
+//     - ?part=N: streams specific part for multi-chunk movies
+// ---------------------------------------------------------------------------
+export async function handleStream(req, res) {
+  try {
+    const { file_id } = req.params;
+    const isDownload = req.query.dl === '1' || req.query.download === '1';
+    const magnetLink = req.query.magnet || null;
+    const title = req.query.title || null;
+    const partNumber = parseInt(req.query.part, 10);
+
+    // 1. Direct Telegram channel message ID (e.g. /api/stream/12345 or /api/stream/msg_12345)
+    const isNumericMsg = /^\d+$/.test(file_id);
+    const isMsgPrefixed = /^msg_(\d+)$/.test(file_id);
+    if (isNumericMsg || isMsgPrefixed) {
+      const msgId = isNumericMsg ? parseInt(file_id, 10) : parseInt(file_id.slice(4), 10);
+      const media = await resolveTelegramMedia({ messageId: msgId });
+      if (!media) {
+        return res.status(404).json({ success: false, message: `Message ${msgId} not found in Telegram channel.` });
+      }
+      return await streamMediaToResponse({
+        req,
+        res,
+        document: media.document,
+        localFilePath: media.localFilePath,
+        fileSize: media.fileSize,
+        mimeType: media.mimeType,
+        fileName: media.fileName,
+        isDownload,
+      });
+    }
+
+    // 2. Check if file_id is a MovieChunk id or telegramFileId
+    let chunk = await prisma.movieChunk.findFirst({
+      where: {
+        OR: [
+          { id: file_id },
+          { telegramFileId: file_id },
+        ],
+      },
+      include: { movie: true },
+    });
+
+    if (chunk) {
+      const movie = chunk.movie;
+      const partIdx = chunk.chunkIndex;
+      const outFileName = movie.fileName
+        ? buildPartFileName(movie.fileName, partIdx, 1)
+        : `${movie.title}.mp4`;
+      const media = await resolveTelegramMedia({
+        messageId: chunk.telegramMessageId,
+        fileId: chunk.telegramFileId,
+        title: movie.title,
+      });
+      if (!media) {
+        return res.status(404).json({ success: false, message: 'Telegram media for chunk could not be resolved.' });
+      }
+      return await streamMediaToResponse({
+        req,
+        res,
+        document: media.document,
+        localFilePath: media.localFilePath,
+        fileSize: chunk.chunkSize || media.fileSize,
+        mimeType: movie.mimeType || media.mimeType || 'video/mp4',
+        fileName: outFileName,
+        isDownload,
+      });
+    }
+
+    // 3. Check if file_id is a Movie ID or Movie Title in the cache database
+    const entry = await peekCacheEntry(file_id);
+    const activeMagnet = magnetLink || entry?.movie?.magnetLink || null;
+    const movieTitle = entry?.movie?.title || title || file_id;
+    const movieFileName = entry?.movie?.fileName || `${movieTitle}.mp4`;
+
+    // A. If movie is cached in Telegram with chunks, stream from Telegram MTProto
+    if (entry && entry.cached) {
+      const chunks = await prisma.movieChunk.findMany({
+        where: { movieId: entry.movie.id },
+        orderBy: { chunkIndex: 'asc' },
+      });
+
+      if (chunks.length > 0) {
+        const targetIdx = Number.isInteger(partNumber) && partNumber >= 1 && partNumber <= chunks.length
+          ? partNumber - 1
+          : 0;
+        const targetChunk = chunks[targetIdx];
+
+        await prisma.movie.update({
+          where: { id: entry.movie.id },
+          data: { lastDownloadedAt: new Date() },
+        });
+
+        const outFileName = chunks.length > 1
+          ? buildPartFileName(movieFileName, targetIdx, chunks.length)
+          : movieFileName;
+
+        const media = await resolveTelegramMedia({
+          messageId: targetChunk.telegramMessageId,
+          fileId: targetChunk.telegramFileId,
+          title: movieTitle,
+        });
+
+        if (media) {
+          return await streamMediaToResponse({
+            req,
+            res,
+            document: media.document,
+            localFilePath: media.localFilePath,
+            fileSize: targetChunk.chunkSize || media.fileSize,
+            mimeType: entry.movie.mimeType || media.mimeType || 'video/mp4',
+            fileName: outFileName,
+          });
+        }
+        console.warn(`[STREAM_API] Telegram media resolution failed for "${movieTitle}", attempting torrent stream fallback...`);
+      }
+    }
+
+    // B. If not yet cached in Telegram but a magnet link is available, stream torrent on-the-fly directly to client!
+    if (activeMagnet) {
+      console.log(`[STREAM_API] Streaming direct torrent download for "${movieTitle}"`);
+      // Non-blocking: ensure background caching is queued
+      cacheMovie({ title: movieTitle, magnetLink: activeMagnet, fallbackTitle: file_id }).catch(() => {});
+
+      return await streamTorrentFile({
+        magnetLink: activeMagnet,
+        req,
+        res,
+        fileName: movieFileName,
+      });
+    }
+
+    return res.status(404).json({
+      success: false,
+      message: 'Media file not found in Telegram CDN and no torrent magnet provided to stream.',
+    });
+  } catch (err) {
+    if (res.headersSent) {
+      console.error('[STREAM_API] Stream error after headers sent:', err.message);
+      res.destroy();
+      return;
+    }
+    const status = httpStatus(err);
+    console.error(`[STREAM_API] GET /stream failed (${status}):`, err.message);
+    return res.status(status).json({ success: false, message: err.message });
+  }
+}
+
+router.get('/stream/:file_id', handleStream);
+
+// ---------------------------------------------------------------------------
+// Standalone routers: mounted at /api/download and /api/stream in server.js
 // ---------------------------------------------------------------------------
 const downloadRouter = express.Router();
 downloadRouter.get('/:idOrTitle', handleDownload);
 
-export { downloadRouter };
+const streamRouter = express.Router();
+streamRouter.get('/:file_id', handleStream);
+
+export { downloadRouter, streamRouter };
 export default router;

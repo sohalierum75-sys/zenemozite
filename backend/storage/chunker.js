@@ -166,6 +166,7 @@ export async function splitAndUpload(filePath, { movieId, title, fileName, mimeT
         });
       }
       const fileId = result.fileId;
+      const messageId = result.messageId || null;
       fileIds.push(fileId);
 
       await prisma.movieChunk.create({
@@ -173,11 +174,12 @@ export async function splitAndUpload(filePath, { movieId, title, fileName, mimeT
           movieId,
           chunkIndex: i,
           telegramFileId: fileId,
+          telegramMessageId: messageId,
           chunkSize: thisSize,
         },
       });
 
-      console.log(`[CHUNKER] Chunk ${i + 1}/${chunkCount} saved (file_id: ${fileId})`);
+      console.log(`[CHUNKER] Chunk ${i + 1}/${chunkCount} saved (file_id: ${fileId}, message_id: ${messageId || 'none'})`);
     } finally {
       // HARD CLEANUP after every chunk: delete the spliced part file, destroy
       // the reader (releases fd + highWaterMark window), drop references, and

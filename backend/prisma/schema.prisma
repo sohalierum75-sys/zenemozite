@@ -98,9 +98,10 @@ model MovieChunk {
   movieId        String
   movie          Movie    @relation(fields: [movieId], references: [id], onDelete: Cascade)
   chunkIndex     Int      // 0-based order — chunks MUST be concatenated in this order
-  telegramFileId String   // Telegram file_id returned by the Local Bot API upload
-  chunkSize      Float    // exact byte size of this chunk
-  createdAt      DateTime @default(now())
+  telegramFileId    String   // Telegram file_id returned by the Local Bot API upload
+  telegramMessageId Int?     // Telegram message_id in the channel for direct GramJS MTProto streaming
+  chunkSize         Float    // exact byte size of this chunk
+  createdAt         DateTime @default(now())
 
   @@unique([movieId, chunkIndex])
   @@index([movieId])

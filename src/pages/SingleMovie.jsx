@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, Search, MessageSquare } from 'lucide-react';
 import ReportBrokenLink from '../components/ReportBrokenLink';
 import DownloadButton from '../components/DownloadButton';
+import DirectStreamButton from '../components/DirectStreamButton';
 import { useLocale } from '../context/LocaleContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
@@ -470,17 +471,23 @@ const SingleMovie = () => {
                             )}
                           </div>
 
-                          {/* Download - opens webtor.io in a NEW tab with the magnet
-                              link. The click also fire-and-forget queues the movie in
-                              the backend Telegram CDN worker (VPS keeps caching
-                              to Telegram regardless of the user going to webtor.io). */}
-                          <div className="mt-4">
+                          {/* Download & Direct Stream buttons:
+                              1. DownloadButton: keeps existing logic and styling intact.
+                              2. DirectStreamButton: new direct Telegram MTProto Userbot streaming & direct download. */}
+                          <div className="mt-4 flex flex-col sm:flex-row items-stretch gap-3">
                             <DownloadButton
                               movieId={movie?.title}
                               title={movie?.title}
                               magnetLink={torrent.url}
                               label={isLk ? 'Download | බාගත කරන්න' : 'Download'}
                               className="w-full bg-[#ff9900] text-[#0f1115] hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] hover:-translate-y-1"
+                            />
+                            <DirectStreamButton
+                              movieId={movie?.title}
+                              title={movie?.title}
+                              magnetLink={torrent.url}
+                              label={isLk ? 'Direct Download | සෘජු බාගත කිරීම' : 'Direct Download'}
+                              className="w-full sm:w-auto flex-1"
                             />
                           </div>
                         </div>
@@ -501,10 +508,9 @@ const SingleMovie = () => {
                   {/* Info Box */}
                   <div className="mt-6 glass-card rounded-xl p-4">
                     <p className="text-[#8b94a6] text-sm leading-relaxed">
-                      <strong className="text-white">How It Works:</strong><br />
-                      • Click <strong className="text-[#ff9900]">Download</strong> and the file streams directly from our CDN to your browser as one continuous file.<br />
-                      • Large movies are automatically split and reassembled — you get a single playable file.<br />
-                      • First-time downloads may take a moment while we prepare the file.
+                      <strong className="text-white">Download Options:</strong><br />
+                      • Click <strong className="text-[#ff9900]">Download</strong> to process the torrent via WebTorrent / webtor.io in a new tab.<br />
+                      • Click <strong className="text-[#ff0080]">Direct Download</strong> to download the movie file directly to your device via high-speed Telegram streaming (Zero-RAM).
                     </p>
                   </div>
                 </div>

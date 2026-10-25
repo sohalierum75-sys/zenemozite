@@ -34,8 +34,12 @@ export const config = {
     // the file from ITS OWN disk, so zero file bytes flow through this Node
     // process and HTTP upload timeouts disappear.
     sharedDir: (process.env.TELEGRAM_SHARED_DIR || '').trim(),
+    // Telegram MTProto Userbot configuration (GramJS)
+    apiId: parseInt(process.env.TELEGRAM_API_ID || '23271365', 10),
+    apiHash: (process.env.TELEGRAM_API_HASH || '59a8393f1c17083798b42333d16ff224').trim(),
+    stringSession: (process.env.TELEGRAM_STRING_SESSION || process.env.TELEGRAM_SESSION || '').trim(),
     get configured() {
-      return Boolean(telegramToken && telegramChatId);
+      return Boolean((telegramToken || process.env.TELEGRAM_STRING_SESSION) && telegramChatId);
     },
   },
 };
