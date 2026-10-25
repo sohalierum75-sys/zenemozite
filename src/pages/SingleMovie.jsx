@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, Search, MessageSquare } from 'lucide-react';
+import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, Search, MessageSquare, Sparkles } from 'lucide-react';
 import ReportBrokenLink from '../components/ReportBrokenLink';
 import DownloadButton from '../components/DownloadButton';
 import DirectStreamButton from '../components/DirectStreamButton';
@@ -108,6 +108,8 @@ const SingleMovie = () => {
   };
 
   const hasTorrents = movie?.torrents && Array.isArray(movie.torrents) && movie.torrents.length > 0;
+  const hasDirectLinks = movie?.download_links && Array.isArray(movie.download_links) && movie.download_links.length > 0;
+  const hasDownloadOptions = hasTorrents || hasDirectLinks;
 
   if (loading) {
     return (
@@ -409,8 +411,7 @@ const SingleMovie = () => {
                 {isLk && (movie?.is_tv ? 'කතාමාලා බාගත කරන්න' : 'චිත්‍රපටය බාගත කරන්න')}
               </h4>
 
-              {/* Sinhala Subtitles Search Button — only rendered for visitors in Sri Lanka (LK).
-                  All other countries (and geo-detection failures) get the English-only UI. */}
+              {/* Sinhala Subtitles Search Button */}
               {isLk && (
               <div className="mb-6">
                 <a
@@ -428,19 +429,51 @@ const SingleMovie = () => {
               </div>
               )}
 
-              {hasTorrents ? (
-                <div>
-                  {/* Warning Message */}
-                  <div className="bg-[var(--accent)]/10 border-l-4 border-[var(--accent)] rounded-lg p-4 mb-6 transition-accent">
-                    <p className="text-[var(--accent)] text-sm font-medium flex items-start space-x-2 transition-accent">
-                      <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                      <span>
-                        Download option requires a torrent application installed on your device.
-                      </span>
-                    </p>
+              {/* Direct Download Links Section (Google Drive, Mega, Pixeldrain) */}
+              {hasDirectLinks && (
+                <div className="glass-card rounded-2xl p-5 mb-6 border border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 via-black/40 to-transparent">
+                  <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                    <div className="flex items-center space-x-2">
+                      <Sparkles className="w-5 h-5 text-emerald-400 animate-pulse" />
+                      <h4 className="text-white font-bold text-lg">
+                        Fast Direct Cloud Downloads
+                      </h4>
+                    </div>
+                    <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                      {movie.download_links.length} Link{movie.download_links.length > 1 ? 's' : ''} Available
+                    </span>
                   </div>
+                  <p className="text-[#8b94a6] text-sm mb-4">
+                    High-speed direct file downloads from Google Drive, Mega, Pixeldrain, and direct CDNs.
+                  </p>
+                  <div className="max-w-md">
+                    <DownloadButton
+                      movieId={movie?.id || movie?.title}
+                      title={movie?.title}
+                      downloadLinks={movie.download_links}
+                      label={isLk ? 'Download File (DDL) | සෘජු බාගත කිරීම' : 'Download File (DDL)'}
+                      className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:-translate-y-0.5"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {hasDownloadOptions ? (
+                <div>
+                  {/* Warning Message (only when torrents are present) */}
+                  {hasTorrents && (
+                    <div className="bg-[var(--accent)]/10 border-l-4 border-[var(--accent)] rounded-lg p-4 mb-6 transition-accent">
+                      <p className="text-[var(--accent)] text-sm font-medium flex items-start space-x-2 transition-accent">
+                        <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                        <span>
+                          Torrent download options require a torrent client or webtor.io web stream.
+                        </span>
+                      </p>
+                    </div>
+                  )}
 
                   {/* Download Buttons - 3 Button System Per Quality */}
+                  {hasTorrents && (
                   <div className="space-y-4">
                     {movie?.torrents?.map((torrent, index) => {
                       if (!torrent || !torrent.url) return null;
@@ -472,13 +505,14 @@ const SingleMovie = () => {
                           </div>
 
                           {/* Download & Direct Stream buttons:
-                              1. DownloadButton: keeps existing logic and styling intact.
-                              2. DirectStreamButton: new direct Telegram MTProto Userbot streaming & direct download. */}
+                              1. DownloadButton: opens styled dropdown with DDLs + WebTorrent option.
+                              2. DirectStreamButton: direct Telegram MTProto Userbot streaming & direct download. */}
                           <div className="mt-4 flex flex-col sm:flex-row items-stretch gap-3">
                             <DownloadButton
                               movieId={movie?.title}
                               title={movie?.title}
                               magnetLink={torrent.url}
+                              downloadLinks={movie?.download_links || []}
                               label={isLk ? 'Download | බාගත කරන්න' : 'Download'}
                               className="w-full bg-[#ff9900] text-[#0f1115] hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] hover:-translate-y-1"
                             />
@@ -494,6 +528,7 @@ const SingleMovie = () => {
                       );
                     })}
                   </div>
+                  )}
 
                   {/* Automated Report & Fix Broken Link */}
                   <ReportBrokenLink
@@ -509,7 +544,7 @@ const SingleMovie = () => {
                   <div className="mt-6 glass-card rounded-xl p-4">
                     <p className="text-[#8b94a6] text-sm leading-relaxed">
                       <strong className="text-white">Download Options:</strong><br />
-                      • Click <strong className="text-[#ff9900]">Download</strong> to process the torrent via WebTorrent / webtor.io in a new tab.<br />
+                      • Click <strong className="text-[#ff9900]">Download</strong> to open the download options dropdown (Cloud DDL + WebTorrent).<br />
                       • Click <strong className="text-[#ff0080]">Direct Download</strong> to download the movie file directly to your device via high-speed Telegram streaming (Zero-RAM).
                     </p>
                   </div>

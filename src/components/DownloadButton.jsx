@@ -1,100 +1,282 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
-import { Download, ExternalLink } from 'lucide-react';
+import { Download, ExternalLink, ChevronDown, ChevronUp, Server, HardDrive, Sparkles, X, CheckCircle2 } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 const WEBTOR_URL = 'https://webtor.io/';
 
 /**
- * Download Button — SPLIT WORKFLOW
- *
- * 1. FRONTEND (user action): clicking opens a NEW TAB at https://webtor.io/
- *    with the movie's magnet link (or .torrent URL) appended, so webtor.io
- *    processes the torrent directly for the user:
- *        https://webtor.io/?magnet=<url-encoded magnet URI>
- *        https://webtor.io/?torrent=<url-encoded .torrent URL>
- *
- * 2. BACKEND (Telegram backup — untouched): the same click fires a
- *    fire-and-forget request to GET /api/download/:idOrTitle?magnet=...,
- *    which queues the movie in the backend's Telegram CDN worker. The VPS
- *    still downloads the torrent and uploads it in chunks to the private
- *    Telegram channel, regardless of the user going to webtor.io.
+ * Helper to get distinctive color accents for popular cloud storage providers
  */
-const DownloadButton = ({ movieId, magnetLink, title, label = 'Download', className = '' }) => {
-  const [opened, setOpened] = useState(false);
+function getProviderStyle(provider = '') {
+  const p = provider.toLowerCase();
+  if (p.includes('google') || p.includes('gdrive') || p.includes('drive')) {
+    return {
+      bg: 'bg-blue-500/10 hover:bg-blue-500/20',
+      border: 'border-blue-500/30 hover:border-blue-500/60',
+      text: 'text-blue-400',
+      badge: 'bg-blue-500/20 text-blue-300'
+    };
+  }
+  if (p.includes('mega')) {
+    return {
+      bg: 'bg-red-500/10 hover:bg-red-500/20',
+      border: 'border-red-500/30 hover:border-red-500/60',
+      text: 'text-red-400',
+      badge: 'bg-red-500/20 text-red-300'
+    };
+  }
+  if (p.includes('pixel') || p.includes('pixeldrain')) {
+    return {
+      bg: 'bg-purple-500/10 hover:bg-purple-500/20',
+      border: 'border-purple-500/30 hover:border-purple-500/60',
+      text: 'text-purple-400',
+      badge: 'bg-purple-500/20 text-purple-300'
+    };
+  }
+  if (p.includes('mediafire')) {
+    return {
+      bg: 'bg-cyan-500/10 hover:bg-cyan-500/20',
+      border: 'border-cyan-500/30 hover:border-cyan-500/60',
+      text: 'text-cyan-400',
+      badge: 'bg-cyan-500/20 text-cyan-300'
+    };
+  }
+  // Default direct link style
+  return {
+    bg: 'bg-emerald-500/10 hover:bg-emerald-500/20',
+    border: 'border-emerald-500/30 hover:border-emerald-500/60',
+    text: 'text-emerald-400',
+    badge: 'bg-emerald-500/20 text-emerald-300'
+  };
+}
 
-  /**
-   * webtor.io deep link — the OFFICIAL format, taken from webtor.io's own
-   * open-source frontend (github.com/webtor-io/web-ui, MIT):
-   *
-   *   handlers/resource/handler.go:  GET /:resource_id -> if the path starts
-   *                                  with "magnet", the magnet-loading flow runs
-   *   handlers/resource/post.go:     query = TrimPrefix(path, "/") + RawQuery
-   *                                  (doc comment shows "/magnet:?xt=...")
-   *
-   * So the magnet URI is appended to the site root VERBATIM:
-   *
-   *   https://webtor.io/magnet:?xt=urn:btih:...&dn=...&tr=...
-   *
-   * The magnet's own "?" becomes the URL query separator, letting the server
-   * reassemble the exact magnet and start searching/loading it instantly.
-   * DO NOT encodeURIComponent the whole magnet here — encoding "?" and "&"
-   * would keep them inside the path and break the server-side reconstruction.
-   * A valid magnet URI is already percent-encoded per the magnet spec.
-   */
+/**
+ * Helper for quality tag colors
+ */
+function getQualityBadge(quality = '') {
+  const q = quality.toLowerCase();
+  if (q.includes('4k') || q.includes('2160')) {
+    return 'bg-gradient-to-r from-pink-500 to-purple-500 text-white shadow-sm';
+  }
+  if (q.includes('1080')) {
+    return 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+  }
+  if (q.includes('720')) {
+    return 'bg-sky-500/20 text-sky-300 border border-sky-500/30';
+  }
+  return 'bg-slate-700/50 text-slate-300 border border-slate-600/30';
+}
+
+/**
+ * DownloadButton Component with Dropdown Menu
+ *
+ * Supports multiple Direct Download Links (DDL) from the database:
+ * - Clicking the main button toggles a styled dropdown menu.
+ * - Maps through download_links array (provider, quality, url, size).
+ * - Clicking an individual link opens the external URL in a new tab.
+ * - Handles outside clicks and Escape key to close smoothly.
+ * - Retains optional fallback torrent / webtor processing if magnetLink is provided.
+ */
+const DownloadButton = ({
+  movieId,
+  title,
+  magnetLink,
+  downloadLinks = [],
+  label = 'Download',
+  className = ''
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [lastClickedUrl, setLastClickedUrl] = useState(null);
+  const dropdownRef = useRef(null);
+
+  // Close dropdown on outside click or Touch
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    }
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('touchstart', handleClickOutside);
+      document.addEventListener('keydown', handleKeyDown);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen]);
+
+  const toggleDropdown = () => {
+    setIsOpen((prev) => !prev);
+  };
+
+  const handleLinkClick = (url) => {
+    if (!url) return;
+    setLastClickedUrl(url);
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  // Webtor fallback link builder
   const buildWebtorUrl = () => {
     if (!magnetLink) return WEBTOR_URL;
     if (magnetLink.startsWith('magnet:')) return `${WEBTOR_URL}${magnetLink}`;
-    // Non-magnet targets (.torrent URLs) have no direct deep link on
-    // webtor.io's public frontend — fall back to the home page.
     return WEBTOR_URL;
   };
 
-  /**
-   * Fire-and-forget: queue the movie in the backend Telegram CDN worker so
-   * the VPS keeps caching to Telegram even though the user is sent to
-   * webtor.io. Backend hiccups must NEVER block the user-facing download.
-   */
-  const queueBackendTelegramBackup = () => {
-    if (!movieId) return;
-    const params = new URLSearchParams();
-    if (magnetLink) params.append('magnet', magnetLink);
-    if (title) params.append('title', title);
-    const url = `${API_BASE_URL}/download/${encodeURIComponent(movieId)}${params.toString() ? `?${params}` : ''}`;
-    axios.get(url, { timeout: 20000 }).catch((err) => {
-      console.warn('[DownloadButton] Could not queue backend Telegram caching:', err?.message);
-    });
+  const handleWebtorClick = () => {
+    if (movieId) {
+      const params = new URLSearchParams();
+      if (magnetLink) params.append('magnet', magnetLink);
+      if (title) params.append('title', title);
+      const url = `${API_BASE_URL}/download/${encodeURIComponent(movieId)}${params.toString() ? `?${params}` : ''}`;
+      axios.get(url, { timeout: 20000 }).catch(() => {});
+    }
+    window.open(buildWebtorUrl(), '_blank', 'noopener,noreferrer');
   };
 
-  const handleClick = () => {
-    // 1) Keep the backend Telegram backup pipeline running (fire-and-forget)
-    queueBackendTelegramBackup();
-    // 2) Send the user to webtor.io in a NEW tab
-    window.open(buildWebtorUrl(), '_blank', 'noopener,noreferrer');
-    setOpened(true);
-  };
+  const hasDirectLinks = Array.isArray(downloadLinks) && downloadLinks.length > 0;
+  const hasTorrent = Boolean(magnetLink);
 
   return (
-    <div className="flex-1 flex flex-col items-stretch gap-2">
+    <div ref={dropdownRef} className="relative flex-1 flex flex-col items-stretch">
+      {/* Main Trigger Button */}
       <button
-        onClick={handleClick}
-        disabled={!movieId && !magnetLink}
-        className={`inline-flex items-center justify-center space-x-2 font-bold py-3 px-6 rounded-xl transition-all duration-300 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+        type="button"
+        onClick={toggleDropdown}
+        disabled={!hasDirectLinks && !hasTorrent}
+        aria-haspopup="true"
+        aria-expanded={isOpen}
+        className={`inline-flex items-center justify-center space-x-2 font-bold py-3 px-6 rounded-xl transition-all duration-300 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-md ${className}`}
       >
-        <Download className="w-5 h-5" />
+        <Download className="w-5 h-5 transition-transform duration-300 group-hover:translate-y-0.5" />
         <span>{label}</span>
+        {hasDirectLinks && (
+          <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-black/30 font-semibold">
+            {downloadLinks.length}
+          </span>
+        )}
+        {isOpen ? (
+          <ChevronUp className="w-4 h-4 ml-1 transition-transform" />
+        ) : (
+          <ChevronDown className="w-4 h-4 ml-1 transition-transform" />
+        )}
       </button>
 
-      {opened && (
-        <a
-          href={buildWebtorUrl()}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center justify-center space-x-1.5 text-xs text-[#8b94a6] hover:text-white transition-colors"
+      {/* Styled Dropdown Menu */}
+      {isOpen && (
+        <div
+          role="menu"
+          className="absolute z-50 left-0 right-0 sm:left-auto sm:right-0 sm:w-80 top-full mt-2.5 rounded-2xl bg-[#141822]/95 backdrop-blur-xl border border-white/10 shadow-[0_15px_35px_rgba(0,0,0,0.6)] p-3.5 space-y-2.5 animate-in fade-in zoom-in-95 duration-200"
         >
-          <ExternalLink className="w-3.5 h-3.5" />
-          <span>Opened webtor.io in a new tab — click to reopen</span>
-        </a>
+          {/* Header */}
+          <div className="flex items-center justify-between px-2 pb-2 border-b border-white/10">
+            <div className="flex items-center space-x-2">
+              <Sparkles className="w-4 h-4 text-[var(--accent)]" />
+              <span className="text-xs font-bold uppercase tracking-wider text-white">
+                Download Options
+              </span>
+            </div>
+            <button
+              onClick={() => setIsOpen(false)}
+              className="text-[#8b94a6] hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors"
+              title="Close menu"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Direct Download Links list */}
+          {hasDirectLinks ? (
+            <div className="space-y-2 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
+              <div className="text-[11px] font-semibold text-[#8b94a6] px-2 uppercase tracking-wider">
+                Direct Cloud Links (DDL)
+              </div>
+              {downloadLinks.map((link, idx) => {
+                const style = getProviderStyle(link.provider);
+                const qualityBadge = getQualityBadge(link.quality);
+                const isSelected = lastClickedUrl === link.url;
+
+                return (
+                  <button
+                    key={link.id || `ddl-${idx}`}
+                    onClick={() => handleLinkClick(link.url)}
+                    className={`w-full text-left p-3 rounded-xl border transition-all duration-200 flex items-center justify-between group active:scale-[0.98] ${style.bg} ${style.border}`}
+                  >
+                    <div className="flex items-center space-x-3 overflow-hidden">
+                      <div className={`p-2 rounded-lg bg-black/40 ${style.text}`}>
+                        <HardDrive className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-sm font-bold text-white group-hover:text-[var(--accent)] transition-colors truncate">
+                            {link.provider || 'Direct Download'}
+                          </span>
+                        </div>
+                        {link.size && (
+                          <div className="text-xs text-[#8b94a6] mt-0.5">
+                            {link.size}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2 flex-shrink-0 ml-2">
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${qualityBadge}`}>
+                        {link.quality || '1080p'}
+                      </span>
+                      {isSelected ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      ) : (
+                        <ExternalLink className="w-4 h-4 text-[#8b94a6] group-hover:text-white transition-colors" />
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="p-3 text-center rounded-xl bg-white/5 border border-white/5">
+              <p className="text-xs text-[#8b94a6]">No direct cloud links added yet.</p>
+            </div>
+          )}
+
+          {/* Torrent / Webtor fallback section */}
+          {hasTorrent && (
+            <div className="pt-2 border-t border-white/10 space-y-1.5">
+              <div className="text-[11px] font-semibold text-[#8b94a6] px-2 uppercase tracking-wider">
+                Torrent Engine
+              </div>
+              <button
+                onClick={handleWebtorClick}
+                className="w-full text-left p-3 rounded-xl border border-orange-500/30 bg-orange-500/10 hover:bg-orange-500/20 hover:border-orange-500/50 transition-all duration-200 flex items-center justify-between group active:scale-[0.98]"
+              >
+                <div className="flex items-center space-x-3">
+                  <div className="p-2 rounded-lg bg-black/40 text-orange-400">
+                    <Server className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-white group-hover:text-orange-400 transition-colors">
+                      WebTorrent (webtor.io)
+                    </span>
+                    <p className="text-[11px] text-[#8b94a6]">Stream & download via peer-to-peer</p>
+                  </div>
+                </div>
+                <ExternalLink className="w-4 h-4 text-[#8b94a6] group-hover:text-white transition-colors flex-shrink-0 ml-2" />
+              </button>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

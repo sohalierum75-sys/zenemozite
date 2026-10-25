@@ -31,6 +31,7 @@ model MediaCache {
   genres         String?  // JSON string array
   ytTrailerCode  String?
   torrents       String?  // JSON string array of torrent objects
+  download_links String?  // JSON string array of DDL objects [{ provider, quality, url }]
   numberOfSeasons Int?    // For TV shows only
   lastUpdated    DateTime @default(now())
   createdAt      DateTime @default(now())
@@ -52,12 +53,7 @@ model ListCache {
 }
 
 // ==============================================================================
-// TELEGRAM INVISIBLE CDN
-// Movies are split into byte-range chunks (<= ~1.9GB each, configurable) and
-// each chunk is uploaded to a private Telegram channel via the Local Bot API.
-// The download route streams all chunks sequentially into a single HTTP
-// response so the user receives one continuous file — Telegram is invisible.
-// Byte sizes are stored as Float (exact up to ~9 petabytes, JSON-safe).
+// TELEGRAM INVISIBLE CDN & MOVIE DATABASE
 // ==============================================================================
 
 model Movie {
@@ -71,12 +67,11 @@ model Movie {
   lastError        String?      // human-readable reason for the last 'failed' status
   telegramFileIds  String?      // JSON array of Telegram file_ids for ALL parts of the
                                 // movie, in order — e.g. '["id_part1","id_part2"]'.
-                                // Written by the chunker when every part is uploaded;
-                                // lets the API/frontend handle multi-part downloads
-                                // without re-querying the MovieChunk rows.
+  download_links   String?      // JSON array of Direct Download Links [{ provider, quality, url }]
   lastDownloadedAt DateTime     @default(now()) // touched on every download request
   createdAt        DateTime     @default(now())
   chunks           MovieChunk[]
+  downloadLinks    DownloadLink[]
 
   // --- TMDB metadata (auto-saved when movie lists are fetched & cached) ---
   tmdbId           Int?         // TMDB movie ID — unique key for upsert
@@ -105,4 +100,21 @@ model MovieChunk {
 
   @@unique([movieId, chunkIndex])
   @@index([movieId])
+}
+
+// Direct Download Links (DDL) model
+model DownloadLink {
+  id        String   @id @default(uuid())
+  movieId   String?
+  movie     Movie?   @relation(fields: [movieId], references: [id], onDelete: Cascade)
+  tmdbId    String?  // Links directly to TMDB ID (matches movies from TMDB / MediaCache)
+  provider  String   // e.g. "Google Drive", "Mega", "Pixeldrain", "Direct"
+  quality   String   // e.g. "1080p", "720p", "480p", "4K"
+  url       String   // The external or direct download URL
+  size      String?  // Optional file size display, e.g. "1.8 GB"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([movieId])
+  @@index([tmdbId])
 }

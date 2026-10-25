@@ -6,6 +6,7 @@ import TorrentSearchApi from 'torrent-search-api';
 import hybridCacheRoutes, { downloadRouter, streamRouter } from './storage/routes.js';
 import { fetchAndCacheMovies, createTMDBListFetcher } from './listCache.js';
 import { startWorker } from './storage/worker.js';
+import adminRouter, { getDownloadLinksForMovie } from './adminRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -363,6 +364,8 @@ app.use('/api/hybrid-cache', hybridCacheRoutes);
 app.use('/api/download', downloadRouter);
 // Direct GramJS MTProto Userbot streaming & Range request endpoint (GET /api/stream/:file_id)
 app.use('/api/stream', streamRouter);
+// Admin routes for managing movies and direct download links (DDL)
+app.use('/api/admin', adminRouter);
 
 // Serve static files from React app in production
 import path from 'path';
@@ -2278,9 +2281,16 @@ app.get('/api/movies/:id', async (req, res) => {
   
   // STEP 1: Check in-memory cache first (fastest)
   const memCached = getFromCache(cacheKey);
-  if (memCached) {
+  if (memCached && memCached.data) {
     console.log(`[CACHE] Memory cache HIT for movie ${movieId}`);
-    return res.json(memCached);
+    const ddlLinks = await getDownloadLinksForMovie(movieId);
+    return res.json({
+      ...memCached,
+      data: {
+        ...memCached.data,
+        download_links: ddlLinks
+      }
+    });
   }
   
   // STEP 2: Check Prisma database (persistent cache)
@@ -2296,6 +2306,7 @@ app.get('/api/movies/:id', async (req, res) => {
       if (ageInHours < 24) {
         console.log(`[PRISMA] Database cache HIT for movie ${movieId} (${ageInHours.toFixed(1)}h old)`);
         
+        const ddlLinks = await getDownloadLinksForMovie(movieId);
         const responseData = {
           id: parseInt(movieId),
           imdb_id: dbCached.imdbId,
@@ -2309,6 +2320,7 @@ app.get('/api/movies/:id', async (req, res) => {
           genres: dbCached.genres ? JSON.parse(dbCached.genres) : [],
           yt_trailer_code: dbCached.ytTrailerCode,
           torrents: dbCached.torrents ? JSON.parse(dbCached.torrents) : [],
+          download_links: ddlLinks,
           is_tv: dbCached.mediaType === 'tv',
           type: dbCached.mediaType
         };
@@ -2416,7 +2428,8 @@ app.get('/api/movies/:id', async (req, res) => {
       torrents = [];
     }
 
-    // Build response data
+    // Build response data with direct download links
+    const ddlLinks = await getDownloadLinksForMovie(movieId);
     const responseData = {
       id: parseInt(movieId),
       imdb_id: imdbId,
@@ -2430,6 +2443,7 @@ app.get('/api/movies/:id', async (req, res) => {
       genres: movieData.genres?.map(g => g.name) || [],
       yt_trailer_code: trailerCode,
       torrents: torrents,
+      download_links: ddlLinks,
       is_tv: isTVShow,
       type: isTVShow ? 'tv' : 'movie'
     };
