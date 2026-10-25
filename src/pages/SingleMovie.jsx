@@ -431,7 +431,7 @@ const SingleMovie = () => {
 
               {/* Direct Download Links Section (Google Drive, Mega, Pixeldrain) */}
               {hasDirectLinks && (
-                <div className="glass-card rounded-2xl p-5 mb-6 border border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 via-black/40 to-transparent">
+                <div className="glass-card rounded-2xl p-5 mb-6 border border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 via-black/40 to-transparent relative z-30 focus-within:z-50">
                   <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
                     <div className="flex items-center space-x-2">
                       <Sparkles className="w-5 h-5 text-emerald-400 animate-pulse" />
@@ -446,7 +446,7 @@ const SingleMovie = () => {
                   <p className="text-[#8b94a6] text-sm mb-4">
                     High-speed direct file downloads from Google Drive, Mega, Pixeldrain, and direct CDNs.
                   </p>
-                  <div className="max-w-md">
+                  <div className="max-w-md relative z-30 focus-within:z-50">
                     <DownloadButton
                       movieId={movie?.id || movie?.title}
                       title={movie?.title}
@@ -459,7 +459,7 @@ const SingleMovie = () => {
               )}
 
               {hasDownloadOptions ? (
-                <div>
+                <div className="relative z-10">
                   {/* Warning Message (only when torrents are present) */}
                   {hasTorrents && (
                     <div className="bg-[var(--accent)]/10 border-l-4 border-[var(--accent)] rounded-lg p-4 mb-6 transition-accent">
@@ -474,12 +474,12 @@ const SingleMovie = () => {
 
                   {/* Download Buttons - 3 Button System Per Quality */}
                   {hasTorrents && (
-                  <div className="space-y-4">
+                  <div className="space-y-4 relative z-10">
                     {movie?.torrents?.map((torrent, index) => {
                       if (!torrent || !torrent.url) return null;
                       
                       return (
-                        <div key={`torrent-${index}-${torrent.quality || index}`} className="glass-card rounded-xl p-4">
+                        <div key={`torrent-${index}-${torrent.quality || index}`} className="glass-card rounded-xl p-4 relative z-10 focus-within:z-50 hover:z-20">
                           {/* Quality Header with Provider Badge */}
                           <div className="mb-3">
                             <div className="flex items-center justify-between flex-wrap gap-2">
@@ -507,7 +507,7 @@ const SingleMovie = () => {
                           {/* Download & Direct Stream buttons:
                               1. DownloadButton: opens styled dropdown with DDLs + WebTorrent option.
                               2. DirectStreamButton: direct Telegram MTProto Userbot streaming & direct download. */}
-                          <div className="mt-4 flex flex-col sm:flex-row items-stretch gap-3">
+                          <div className="mt-4 flex flex-col sm:flex-row items-stretch gap-3 relative z-10 focus-within:z-50">
                             <DownloadButton
                               movieId={movie?.title}
                               title={movie?.title}

@@ -149,7 +149,10 @@ const DownloadButton = ({
   const hasTorrent = Boolean(magnetLink);
 
   return (
-    <div ref={dropdownRef} className="relative flex-1 flex flex-col items-stretch">
+    <div
+      ref={dropdownRef}
+      className={`relative flex-1 flex flex-col items-stretch ${isOpen ? 'z-[100]' : 'z-20'}`}
+    >
       {/* Main Trigger Button */}
       <button
         type="button"
@@ -177,7 +180,7 @@ const DownloadButton = ({
       {isOpen && (
         <div
           role="menu"
-          className="absolute z-50 left-0 right-0 sm:left-auto sm:right-0 sm:w-80 top-full mt-2.5 rounded-2xl bg-[#141822]/95 backdrop-blur-xl border border-white/10 shadow-[0_15px_35px_rgba(0,0,0,0.6)] p-3.5 space-y-2.5 animate-in fade-in zoom-in-95 duration-200"
+          className="absolute z-[100] top-full mt-2 left-0 right-0 sm:left-0 sm:right-auto sm:w-80 rounded-2xl bg-[#141822] backdrop-blur-2xl border border-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.85)] p-3.5 space-y-2.5 animate-in fade-in zoom-in-95 duration-200"
         >
           {/* Header */}
           <div className="flex items-center justify-between px-2 pb-2 border-b border-white/10">
