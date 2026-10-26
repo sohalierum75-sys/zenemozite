@@ -92,18 +92,25 @@ const DownloadButton = ({
   const [lastClickedUrl, setLastClickedUrl] = useState(null);
   const dropdownRef = useRef(null);
 
+  // 1. Add Console Log to inspect state
+  console.log("Movie Data State:", movie);
+
   // 1. Data Mapping: Correctly extract the links array from downloadLinks, download_links, or movie object
-  // Supports arrays, JSON strings, and both camelCase and snake_case keys
+  // Supports arrays, JSON strings, nested movie.data.download_links, and both camelCase and snake_case keys
   const linksList = useMemo(() => {
     const raw = (Array.isArray(downloadLinks) && downloadLinks.length > 0)
       ? downloadLinks
       : (Array.isArray(download_links) && download_links.length > 0)
       ? download_links
-      : (Array.isArray(movie?.downloadLinks) && movie.downloadLinks.length > 0)
-      ? movie.downloadLinks
       : (Array.isArray(movie?.download_links) && movie.download_links.length > 0)
       ? movie.download_links
-      : (downloadLinks || download_links || movie?.downloadLinks || movie?.download_links || []);
+      : (Array.isArray(movie?.downloadLinks) && movie.downloadLinks.length > 0)
+      ? movie.downloadLinks
+      : (Array.isArray(movie?.data?.download_links) && movie.data.download_links.length > 0)
+      ? movie.data.download_links
+      : (Array.isArray(movie?.data?.downloadLinks) && movie.data.downloadLinks.length > 0)
+      ? movie.data.downloadLinks
+      : (downloadLinks || download_links || movie?.download_links || movie?.downloadLinks || movie?.data?.download_links || movie?.data?.downloadLinks || []);
 
     if (Array.isArray(raw)) {
       return raw.filter(l => l && (l.url || l.quality));

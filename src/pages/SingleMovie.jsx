@@ -69,9 +69,17 @@ const SingleMovie = () => {
       console.log('[MOVIE] Movie title:', movieData?.title);
       console.log('[MOVIE] Torrents:', movieData?.torrents);
 
-      if (movieData && movieData.id) {
+      if (movieData) {
         // Normalize downloadLinks and download_links to ensure both keys are populated arrays
-        const rawLinks = movieData.downloadLinks || movieData.download_links;
+        const rawLinks = 
+          movieData.download_links ||
+          movieData.downloadLinks ||
+          movieData.data?.download_links ||
+          movieData.data?.downloadLinks ||
+          result?.data?.download_links ||
+          result?.data?.downloadLinks ||
+          [];
+
         let linksArray = [];
         if (Array.isArray(rawLinks)) {
           linksArray = rawLinks;
@@ -81,12 +89,12 @@ const SingleMovie = () => {
             if (Array.isArray(parsed)) linksArray = parsed;
           } catch {}
         }
-        movieData.downloadLinks = linksArray;
         movieData.download_links = linksArray;
+        movieData.downloadLinks = linksArray;
 
         setMovie(movieData);
         setError(null);
-        console.log('[MOVIE] Successfully set movie:', movieData.title, 'links:', linksArray.length);
+        console.log('[MOVIE] Successfully set movie:', movieData.title, 'links count:', linksArray.length);
       } else {
         console.error('[MOVIE] Invalid movie data:', movieData);
         setError('Movie not found');
@@ -121,13 +129,29 @@ const SingleMovie = () => {
     );
   };
 
-  const directLinks = Array.isArray(movie?.downloadLinks) && movie.downloadLinks.length > 0
-    ? movie.downloadLinks
-    : (Array.isArray(movie?.download_links) && movie.download_links.length > 0
-        ? movie.download_links
-        : []);
+  // 1. Add Console Log to inspect state
+  console.log("Movie Data State:", movie);
 
-  const hasTorrents = movie?.torrents && Array.isArray(movie.torrents) && movie.torrents.length > 0;
+  // 2. Fix Data Path: Check movie?.download_links, movie?.downloadLinks, movie?.data?.download_links, movie?.data?.downloadLinks
+  const rawStateLinks = 
+    movie?.download_links ||
+    movie?.downloadLinks ||
+    movie?.data?.download_links ||
+    movie?.data?.downloadLinks;
+
+  let directLinks = [];
+  if (Array.isArray(rawStateLinks)) {
+    directLinks = rawStateLinks;
+  } else if (typeof rawStateLinks === 'string') {
+    try {
+      const parsed = JSON.parse(rawStateLinks);
+      if (Array.isArray(parsed)) directLinks = parsed;
+    } catch {}
+  }
+
+  const hasTorrents = (movie?.torrents || movie?.data?.torrents) && 
+    Array.isArray(movie?.torrents || movie?.data?.torrents) && 
+    (movie?.torrents || movie?.data?.torrents).length > 0;
   const hasDirectLinks = directLinks.length > 0;
   const hasDownloadOptions = hasTorrents || hasDirectLinks;
 

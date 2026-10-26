@@ -54,6 +54,7 @@ export async function getDownloadLinksForMovie(identifier) {
       where: {
         OR: [
           { id: idStr },
+          { title: idStr },
           ...(Number.isInteger(idNum) ? [{ tmdbId: idNum }] : [])
         ]
       },
