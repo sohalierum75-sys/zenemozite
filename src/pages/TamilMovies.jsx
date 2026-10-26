@@ -27,15 +27,15 @@ const TamilMovies = () => {
       }
 
       console.log(`[TAMIL] Fetching Tamil & Malayalam movies (page ${pageNum})...`);
-      
+
       const response = await fetch(`${API_BASE_URL}/movies/tamil?page=${pageNum}`);
-      
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      
+
       const result = await response.json();
-      
+
       console.log('[TAMIL] API Response:', result);
       console.log('[TAMIL] Response type:', typeof result);
       console.log('[TAMIL] Result.data type:', typeof result?.data);
@@ -43,7 +43,7 @@ const TamilMovies = () => {
 
       // SAFE DATA EXTRACTION - Handle both wrapped and direct response
       let moviesData = null;
-      
+
       if (result?.success && result?.data) {
         // New structure: { success: true, data: [...] }
         moviesData = result.data;
@@ -91,7 +91,7 @@ const TamilMovies = () => {
       console.error('[TAMIL] Error name:', err.name);
       console.error('[TAMIL] Error message:', err.message);
       console.error('[TAMIL] Error stack:', err.stack);
-      
+
       // Only set error if this is the first page
       if (!append) {
         setError(`Unable to connect to server: ${err.message}`);
@@ -128,7 +128,7 @@ const TamilMovies = () => {
           <h2 className="text-2xl font-bold text-slate-200 mb-2">Connection Error</h2>
           {isLk && <h3 className="text-xl text-slate-300 mb-4">සම්බන්ධතා ගැටලුවක්</h3>}
           <p className="text-slate-400 mb-6">{error}</p>
-          <button 
+          <button
             onClick={() => fetchTamilMovies(1, false)}
             className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold px-6 py-3 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-lg"
           >
@@ -177,17 +177,17 @@ const TamilMovies = () => {
                     e.target.src = 'https://via.placeholder.com/300x450/1a1d29/8b94a6?text=No+Poster';
                   }}
                 />
-                
+
                 {/* Overlay */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300" />
-                
+
                 {/* Play Icon Overlay */}
                 <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300">
                   <div className="bg-orange-500/90 rounded-full p-4 transform scale-0 group-hover:scale-100 transition-transform duration-300">
                     <ChevronRight className="w-8 h-8 text-white" />
                   </div>
                 </div>
-                
+
                 {/* Rating Badge */}
                 <div className="absolute top-2 right-2 backdrop-blur-md bg-black/60 px-2 py-1 rounded-lg flex items-center space-x-1 border border-orange-500/30">
                   <Star className="w-3 h-3 text-orange-500 fill-current" />
@@ -284,8 +284,8 @@ const TamilMovies = () => {
             <div>
               <h3 className="text-white font-bold text-lg mb-2">About Tamil & Malayalam movies Streaming</h3>
               <p className="text-slate-300 text-sm leading-relaxed">
-                Stream popular TV series directly in your browser using Vidsrc. The player defaults to Season 1, Episode 1, 
-                but you can navigate to other seasons and episodes within the embedded player. Season pack torrents are available 
+                Stream popular TV series directly in your browser using Vidsrc. The player defaults to Season 1, Episode 1,
+                but you can navigate to other seasons and episodes within the embedded player. Season pack torrents are available
                 for download when found.{isLk ? ' Use the Sinhala subtitle search button on each show page to find subtitles.' : ''}
               </p>
             </div>

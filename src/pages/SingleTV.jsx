@@ -17,7 +17,7 @@ const SingleTV = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showTrailer, setShowTrailer] = useState(false);
-  
+
   // Season/Episode state
   const [selectedSeason, setSelectedSeason] = useState(1);
   const [episodes, setEpisodes] = useState([]);
@@ -41,20 +41,20 @@ const SingleTV = () => {
     try {
       setLoading(true);
       setError(null);
-      
+
       console.log(`[TV] Fetching TV show ID: ${id}`);
-      
+
       // FIXED: Use /api/tv/:id endpoint instead of /api/movies/:id
       const response = await fetch(`${API_BASE_URL}/tv/${id}`);
-      
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      
+
       const result = await response.json();
-      
+
       let tvShowData = null;
-      
+
       if (result?.success && result?.data) {
         tvShowData = result.data;
       } else if (result?.data) {
@@ -86,17 +86,17 @@ const SingleTV = () => {
     try {
       setEpisodesLoading(true);
       setEpisodesError(null);
-      
+
       console.log(`[TV] Fetching episodes for season ${seasonNumber}...`);
-      
+
       const response = await fetch(`${API_BASE_URL}/tv/${id}/season/${seasonNumber}`);
-      
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      
+
       const result = await response.json();
-      
+
       if (result.success && result.data && result.data.episodes) {
         setEpisodes(result.data.episodes);
         console.log(`[TV] Loaded ${result.data.episodes.length} episodes for season ${seasonNumber}`);
@@ -140,8 +140,8 @@ const SingleTV = () => {
           <p className="text-[#8b94a6] mb-6">
             {error || 'The TV show you are looking for is not available.'}
           </p>
-          <Link 
-            to="/tv-shows" 
+          <Link
+            to="/tv-shows"
             className="inline-block bg-[var(--accent)] text-[#0f1115] font-bold px-6 py-3 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg shadow-[var(--accent)]/20 active:scale-95"
           >
             Browse TV Shows{isLk ? ' | කතාමාලා බලන්න' : ''}
@@ -158,8 +158,8 @@ const SingleTV = () => {
     <div className="min-h-screen bg-[#0f1115]">
       {/* Back Button */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 animate-fadeInUp">
-        <button 
-          onClick={() => navigate(-1)} 
+        <button
+          onClick={() => navigate(-1)}
           className="inline-flex items-center space-x-2 text-[#8b94a6] hover:text-[var(--accent)] transition-accent"
         >
           <ChevronLeft className="w-5 h-5" />
@@ -204,7 +204,7 @@ const SingleTV = () => {
                 FREE STREAMING
               </span>
             </div>
-            
+
             <iframe
               src={`https://vidsrc.me/embed/tv?tmdb=${tvShow?.id || ''}&season=${selectedSeason}&episode=1`}
               width="100%"
@@ -214,7 +214,7 @@ const SingleTV = () => {
               title={`Watch ${tvShow?.title || 'TV Show'}`}
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             />
-            
+
             <p className="text-[#8b94a6] text-sm text-center">
               Streaming Season {selectedSeason}, Episode 1. Navigate to other episodes using the player controls or download specific episodes below.
             </p>
@@ -225,7 +225,7 @@ const SingleTV = () => {
       {/* TV Show Details */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-16">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
+
           {/* Left Column: Poster & Info */}
           <div className="lg:col-span-1 animate-fadeInUp stagger-3">
             <div className="sticky top-24">
@@ -237,7 +237,7 @@ const SingleTV = () => {
                   e.target.src = DEFAULT_POSTER;
                 }}
               />
-              
+
               {/* IMDb Rating Box */}
               <div className="mt-4 glass-card rounded-2xl p-4 text-center">
                 <div className="flex items-center justify-center space-x-2 mb-2">
@@ -285,7 +285,7 @@ const SingleTV = () => {
 
           {/* Right Column: Details, Seasons, Episodes */}
           <div className="lg:col-span-2 animate-fadeInUp stagger-4">
-            
+
             {/* Genres */}
             {tvShow?.genres && Array.isArray(tvShow.genres) && tvShow.genres.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-6">
@@ -357,7 +357,7 @@ const SingleTV = () => {
                     <X className="w-6 h-6" />
                   </button>
                 </div>
-                
+
                 <iframe
                   src={`https://www.youtube.com/embed/${tvShow.yt_trailer_code}`}
                   width="100%"
@@ -374,7 +374,7 @@ const SingleTV = () => {
             <div className="glass-card rounded-2xl p-6 mb-8">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="text-2xl font-bold text-white">Episodes</h3>
-                
+
                 {/* Season Dropdown */}
                 <div className="relative">
                   <button
@@ -394,11 +394,10 @@ const SingleTV = () => {
                             <button
                               key={seasonNum}
                               onClick={() => handleSeasonChange(seasonNum)}
-                              className={`w-full px-6 py-3 text-left transition-all duration-200 ${
-                                selectedSeason === seasonNum
+                              className={`w-full px-6 py-3 text-left transition-all duration-200 ${selectedSeason === seasonNum
                                   ? 'bg-[var(--accent)]/20 text-[var(--accent)] font-bold'
                                   : 'text-white hover:bg-white/5'
-                              }`}
+                                }`}
                             >
                               Season {seasonNum}
                             </button>
@@ -413,17 +412,17 @@ const SingleTV = () => {
               {/* Sinhala Subtitles Search Button — only rendered for visitors in Sri Lanka (LK).
                   All other countries (and geo-detection failures) get the English-only UI. */}
               {isLk && (
-              <div className="mb-6">
-                <a
-                  href={`https://www.baiscope.lk/?s=${encodeURIComponent(tvShow?.title || '')}+S${selectedSeason.toString().padStart(2, '0')}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 transform hover:scale-[1.02] flex items-center justify-center space-x-3 shadow-lg shadow-orange-500/30 active:scale-95"
-                >
-                  <MessageSquare className="w-6 h-6" />
-                  <span>Sinhala Subtitles for Season {selectedSeason} | සිංහල උපසිරැසි</span>
-                </a>
-              </div>
+                <div className="mb-6">
+                  <a
+                    href={`https://www.baiscope.lk/?s=${encodeURIComponent(tvShow?.title || '')}+S${selectedSeason.toString().padStart(2, '0')}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 transform hover:scale-[1.02] flex items-center justify-center space-x-3 shadow-lg shadow-orange-500/30 active:scale-95"
+                  >
+                    <MessageSquare className="w-6 h-6" />
+                    <span>Sinhala Subtitles for Season {selectedSeason} | සිංහල උපසිරැසි</span>
+                  </a>
+                </div>
               )}
 
               {/* Episodes List */}
@@ -481,7 +480,7 @@ const SingleTV = () => {
                           <h4 className="text-white font-bold text-lg mb-1">
                             {episode.episode_number}. {episode.name}
                           </h4>
-                          
+
                           <div className="flex items-center space-x-3 text-sm text-[#8b94a6] mb-2">
                             {episode.air_date && (
                               <span className="flex items-center space-x-1">
@@ -529,7 +528,7 @@ const SingleTV = () => {
                                       Seeders: {torrent.seeders} | Leechers: {torrent.leechers || 0}
                                     </p>
                                   )}
-                                  
+
                                   {/* Download - opens webtor.io in a NEW tab with the magnet link.
                                       A fire-and-forget onClick ALSO queues the episode in the
                                       backend Telegram CDN worker (VPS keeps caching regardless). */}
@@ -541,7 +540,7 @@ const SingleTV = () => {
                                       onClick={() => {
                                         // Backend Telegram backup (fire-and-forget) — never blocks navigation
                                         const queueUrl = `${API_BASE_URL}/download/${encodeURIComponent(`${tvShow?.title || 'Show'} - ${episode?.name || 'Episode'}`)}?magnet=${encodeURIComponent(torrent.url)}`;
-                                        fetch(queueUrl).catch(() => {});
+                                        fetch(queueUrl).catch(() => { });
                                       }}
                                       className="w-full bg-[#ff9900] text-[#0f1115] font-medium py-2 px-4 rounded-lg transition-all duration-300 flex items-center justify-center space-x-2 hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] text-sm active:scale-95"
                                     >
@@ -561,7 +560,7 @@ const SingleTV = () => {
                                   {isLk && <p className="text-[#8b94a6] text-xs">දැනට ලින්ක්ස් නොමැත</p>}
                                 </div>
                               </div>
-                              
+
                               {/* Disabled Button State */}
                               <div className="flex flex-col sm:flex-row gap-3">
                                 <button
@@ -571,7 +570,7 @@ const SingleTV = () => {
                                   <Play className="w-4 h-4" />
                                   <span>Watch Online</span>
                                 </button>
-                                
+
                                 <button
                                   disabled
                                   className="flex-1 border border-white/5 text-[#4a5568] font-medium py-2 px-4 rounded-lg flex items-center justify-center space-x-2 text-sm cursor-not-allowed opacity-50"
@@ -580,7 +579,7 @@ const SingleTV = () => {
                                   <span>Download</span>
                                 </button>
                               </div>
-                              
+
                               <p className="text-[#8b94a6] text-xs mt-3 text-center">
                                 This episode has no active seeders on the torrent network. Try again later or search manually.
                               </p>

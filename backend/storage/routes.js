@@ -46,7 +46,7 @@ const httpStatus = (err, fallback = 500) =>
 router.post('/initiate', async (req, res) => {
   try {
     const result = await startCacheJob(req.body || {});
-    if (result.promise) result.promise.catch(() => {});
+    if (result.promise) result.promise.catch(() => { });
 
     const { movie, state } = result;
     const cached = state === 'already-cached';
@@ -71,29 +71,132 @@ router.post('/initiate', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /download/:idOrTitle — frontend DownloadButton endpoint
-//   Default: JSON metadata with downloadUrl pointing at the ?dl=1 stream
-//   ?dl=1:   sequential chunk streaming with attachment headers
+// Strict Direct Download Handler (Pass-Through Streaming)
+// GET /api/download/:file_id (and alias GET /api/stream/:file_id)
+//
+// 1. Checks Telegram message IDs, chunk IDs, and direct Telegram Bot API file_ids.
+// 2. Checks Movie cache DB: if cached in Telegram, pipes file directly via HTTP
+//    pass-through from Local Bot API URL without saving to VPS disk first (Zero-Storage).
+// 3. Sets Content-Disposition: attachment; filename="movie.mp4" and
+//    Content-Type: application/octet-stream to strictly force direct downloads.
+// 4. Starts downloading immediately to the browser with zero wait time.
+// 5. If ?info=1 is explicitly requested, returns cache metadata JSON.
 // ---------------------------------------------------------------------------
-async function handleDownload(req, res) {
+export async function handleDownload(req, res) {
   try {
-    const { idOrTitle } = req.params;
+    const file_id = req.params.file_id || req.params.idOrTitle;
     const magnetLink = req.query.magnet || null;
     const title = req.query.title || null;
-    const isStreamMode = req.query.dl === '1';
+    const wantsJsonInfo = req.query.info === '1';
+    const partNumber = parseInt(req.query.part, 10);
+    const safeTitle = (title || 'movie').replace(/[^\w.\- ]/g, '_');
 
-    const entry = await peekCacheEntry(idOrTitle);
+    // 1. Direct Telegram channel message ID (e.g. /api/download/12345 or msg_12345)
+    const isNumericMsg = /^\d+$/.test(file_id);
+    const isMsgPrefixed = /^msg_(\d+)$/.test(file_id);
+    if (isNumericMsg || isMsgPrefixed) {
+      const msgId = isNumericMsg ? parseInt(file_id, 10) : parseInt(file_id.slice(4), 10);
+      const media = await resolveTelegramMedia({ messageId: msgId });
+      if (!media) {
+        return res.status(404).json({ success: false, message: `Message ${msgId} not found in Telegram channel.` });
+      }
+      return await streamMediaToResponse({
+        req,
+        res,
+        document: media.document,
+        localFilePath: media.localFilePath,
+        fileSize: media.fileSize,
+        mimeType: 'application/octet-stream',
+        fileName: media.fileName || 'movie.mp4',
+      });
+    }
 
-    // ---- Not in DB at all: queue if magnet provided, otherwise 404
+    // 2. Check if file_id is a MovieChunk id or telegramFileId
+    let chunk = await prisma.movieChunk.findFirst({
+      where: {
+        OR: [
+          { id: file_id },
+          { telegramFileId: file_id },
+        ],
+      },
+      include: { movie: true },
+    });
+
+    if (chunk) {
+      const movie = chunk.movie;
+      const partIdx = chunk.chunkIndex;
+      const outFileName = movie.fileName
+        ? buildPartFileName(movie.fileName, partIdx, 1)
+        : `${movie.title || 'movie'}.mp4`;
+      const media = await resolveTelegramMedia({
+        messageId: chunk.telegramMessageId,
+        fileId: chunk.telegramFileId,
+        title: movie.title,
+      });
+      if (!media) {
+        return res.status(404).json({ success: false, message: 'Telegram media for chunk could not be resolved.' });
+      }
+      return await streamMediaToResponse({
+        req,
+        res,
+        document: media.document,
+        localFilePath: media.localFilePath,
+        fileSize: chunk.chunkSize || media.fileSize,
+        mimeType: 'application/octet-stream',
+        fileName: outFileName,
+      });
+    }
+
+    // 3. Direct Telegram Bot API file_id (Pass-through stream from Local Bot API)
+    if (config.telegram.configured && (file_id.length > 20 || file_id.startsWith('BAA') || file_id.startsWith('BQAC'))) {
+      try {
+        const directMedia = await resolveTelegramMedia({ fileId: file_id, title: title || 'movie' });
+        if (directMedia && (directMedia.document || directMedia.localFilePath)) {
+          console.log(`[PASS_THROUGH_DOWNLOAD] Direct Telegram file_id resolved: ${file_id}`);
+          return await streamMediaToResponse({
+            req,
+            res,
+            document: directMedia.document,
+            localFilePath: directMedia.localFilePath,
+            fileSize: directMedia.fileSize,
+            mimeType: 'application/octet-stream',
+            fileName: directMedia.fileName || `${safeTitle}.mp4`,
+          });
+        }
+      } catch (directErr) {
+        console.warn(`[PASS_THROUGH_DOWNLOAD] Direct file_id resolution failed for "${file_id}":`, directErr.message);
+      }
+    }
+
+    // 4. Check if file_id is a Movie ID or Movie Title in the cache database
+    const entry = await peekCacheEntry(file_id);
+    const activeMagnet = magnetLink || entry?.movie?.magnetLink || null;
+    const movieTitle = entry?.movie?.title || title || file_id;
+    const movieFileName = entry?.movie?.fileName || `${(movieTitle || 'movie').replace(/[^\w.\- ]/g, '_')}.mp4`;
+
+    // ---- Not in DB at all:
     if (!entry) {
-      if (!magnetLink && !title) {
+      if (!activeMagnet && !title) {
         return res.status(404).json({
           success: false,
-          message: 'Movie not found. Provide ?magnet= (and optionally ?title=) to queue it for caching.',
+          message: 'Movie not found. Provide ?magnet= (and optionally ?title=) to start download.',
         });
       }
-      console.log(`[CDN_API] Queueing new download request: key="${idOrTitle}" | ?title="${title || 'none'}" | magnet=${magnetLink ? 'present' : 'none'}`);
-      const movie = await cacheMovie({ title, magnetLink, fallbackTitle: idOrTitle });
+
+      // If magnet provided and not requesting JSON, stream torrent directly as attachment
+      if (activeMagnet && !wantsJsonInfo) {
+        console.log(`[PASS_THROUGH_DOWNLOAD] Streaming direct torrent download for un-cached movie "${movieTitle}"`);
+        cacheMovie({ title: movieTitle, magnetLink: activeMagnet, fallbackTitle: file_id }).catch(() => {});
+        return await streamTorrentFile({
+          magnetLink: activeMagnet,
+          req,
+          res,
+          fileName: movieFileName,
+        });
+      }
+
+      console.log(`[PASS_THROUGH_DOWNLOAD] Queueing new download request: key="${file_id}" | ?title="${title || 'none'}"`);
+      const movie = await cacheMovie({ title, magnetLink: activeMagnet, fallbackTitle: file_id });
       return res.status(202).json({
         success: true,
         cached: false,
@@ -107,45 +210,45 @@ async function handleDownload(req, res) {
 
     const { movie } = entry;
 
-    // ---- FORCE RESET ON RETRY: a failed, stuck-queued, or never-started
-    // ('pending') movie must requeue immediately when the user clicks
-    // "Try Again" — otherwise the endpoint would keep returning the same
-    // stuck state forever. ('pending' rows are NEVER picked up by the worker,
-    // which only scans 'queued' — without this they hang indefinitely.)
+    // ---- FORCE RESET ON RETRY if failed/queued/pending
     if (['failed', 'queued', 'pending'].includes(movie.status)) {
-      const previousError = movie.lastError || null;
-      const reset = await resetMovieForRetry({ movieId: movie.id, title, magnetLink, fallbackTitle: idOrTitle });
-      if (reset) {
-        return res.status(202).json({
-          success: true,
-          cached: false,
-          downloadUrl: null,
-          state: 'queued',
-          movieId: reset.id,
-          title: reset.title,
-          message: previousError
-            ? `Previous attempt failed (${previousError}). A fresh download has been queued — retrying now.`
-            : 'Download re-queued — a fresh attempt is starting now. Poll this endpoint.',
+      if (activeMagnet && !wantsJsonInfo) {
+        console.log(`[PASS_THROUGH_DOWNLOAD] Streaming direct torrent download while background retrying: "${movieTitle}"`);
+        resetMovieForRetry({ movieId: movie.id, title, magnetLink: activeMagnet, fallbackTitle: file_id }).catch(() => {});
+        return await streamTorrentFile({
+          magnetLink: activeMagnet,
+          req,
+          res,
+          fileName: movieFileName,
         });
       }
-      // reset returned null (row vanished) — fall through and queue fresh below
-      console.log(`[CDN_API] Reset found no row for key="${idOrTitle}" — queueing fresh`);
-      const fresh = await cacheMovie({ title, magnetLink, fallbackTitle: idOrTitle });
+
+      const previousError = movie.lastError || null;
+      const reset = await resetMovieForRetry({ movieId: movie.id, title, magnetLink: activeMagnet, fallbackTitle: file_id });
       return res.status(202).json({
         success: true,
         cached: false,
         downloadUrl: null,
         state: 'queued',
-        movieId: fresh.id,
-        title: fresh.title,
-        message: 'Movie queued for caching. Poll this endpoint — downloadUrl appears once cached.',
+        movieId: reset ? reset.id : movie.id,
+        title: reset ? reset.title : movie.title,
+        message: previousError
+          ? `Previous attempt failed (${previousError}). A fresh download has been queued — retrying now.`
+          : 'Download re-queued — a fresh attempt is starting now.',
       });
     }
 
-    // ---- Actively downloading: keep the queue priority untouched and let the
-    // client keep polling. (Touching lastDownloadedAt here would demote the
-    // movie to the back of the worker's oldest-first queue.)
+    // ---- Actively downloading / not yet cached
     if (!entry.cached) {
+      if (activeMagnet && !wantsJsonInfo) {
+        console.log(`[PASS_THROUGH_DOWNLOAD] In-flight cache: streaming direct torrent download for "${movieTitle}"`);
+        return await streamTorrentFile({
+          magnetLink: activeMagnet,
+          req,
+          res,
+          fileName: movieFileName,
+        });
+      }
       return res.status(202).json({
         success: true,
         cached: false,
@@ -153,118 +256,129 @@ async function handleDownload(req, res) {
         state: movie.status,
         movieId: movie.id,
         title: movie.title,
-        message: 'Caching in progress. Poll again shortly.',
+        message: 'Caching in progress. Direct download will start once ready.',
       });
     }
 
-    // ---- Movie is READY
-    // Touch the download timestamp (only for real downloads — this keeps the
-    // worker's oldest-first queue ordering meaningful)
+    // ---- Movie is READY in DB
     await prisma.movie.update({
       where: { id: movie.id },
       data: { lastDownloadedAt: new Date() },
     });
 
     const fileName = movie.fileName || `${movie.title}.mp4`;
-
-    // Load the ordered chunks once — both stream modes need them.
     const chunks = await prisma.movieChunk.findMany({
       where: { movieId: movie.id },
       orderBy: { chunkIndex: 'asc' },
     });
+
     if (chunks.length === 0) {
+      if (activeMagnet) {
+        return await streamTorrentFile({ magnetLink: activeMagnet, req, res, fileName: movieFileName });
+      }
       return res.status(409).json({ success: false, message: 'No chunks found for this movie.' });
     }
 
-    if (isStreamMode) {
-      // ---- STREAM MODE
-      // ?part=N (1-based): stream ONLY that Telegram part — used by the
-      // frontend's "Download Part N" buttons for multi-part movies.
-      // Without ?part: stream ALL parts concatenated into one continuous file.
-      const partNumber = parseInt(req.query.part, 10);
-      const wantsSinglePart = Number.isInteger(partNumber) && partNumber >= 1;
+    // JSON info mode (only if explicitly requested with ?info=1)
+    if (wantsJsonInfo) {
+      const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+      const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost';
+      const parts = chunks.map((chunk, idx) => ({
+        part: idx + 1,
+        fileName: buildPartFileName(fileName, idx, chunks.length),
+        sizeBytes: chunk.chunkSize,
+        sizeReadable: formatBytes(chunk.chunkSize),
+        fileId: chunk.telegramFileId,
+        messageId: chunk.telegramMessageId,
+        downloadUrl: `${proto}://${host}/api/download/${movie.id}?part=${idx + 1}`,
+      }));
 
-      if (wantsSinglePart && partNumber > chunks.length) {
-        return res.status(404).json({
-          success: false,
-          message: `Part ${partNumber} does not exist — this movie has ${chunks.length} part(s).`,
-        });
-      }
+      const persistedFileIds = parseTelegramFileIds(movie.telegramFileIds);
+      const telegramFileIds = persistedFileIds.length > 0
+        ? persistedFileIds
+        : chunks.map((c) => c.telegramFileId);
 
-      const streamChunks = wantsSinglePart ? [chunks[partNumber - 1]] : chunks;
-      const totalSize = streamChunks.reduce((sum, c) => sum + c.chunkSize, 0);
-      const outFileName = wantsSinglePart
-        ? buildPartFileName(fileName, partNumber - 1, chunks.length)
-        : fileName;
-
-      res.setHeader('Content-Type', movie.mimeType || 'video/mp4');
-      res.setHeader('Content-Disposition', `attachment; filename="${outFileName.replace(/[^\w.\- ]/g, '_')}"`);
-      res.setHeader('Content-Length', String(totalSize));
-
-      console.log(
-        `[CDN_API] Streaming "${movie.title}"` +
-          (wantsSinglePart ? ` part ${partNumber}/${chunks.length}` : ` (${chunks.length} part(s) concatenated)`) +
-          ` (${formatBytes(totalSize)})`
-      );
-
-      const source = createChunkStream(streamChunks);
-      await pipeline(source, res);
-      console.log(`[CDN_API] Stream complete for "${movie.title}"`);
-      return;
+      return res.json({
+        success: true,
+        cached: true,
+        downloadUrl: `${proto}://${host}/api/download/${movie.id}`,
+        parts,
+        chunkCount: chunks.length,
+        telegramFileIds,
+        movieId: movie.id,
+        title: movie.title,
+        fileName,
+        sizeBytes: movie.sizeBytes,
+        sizeReadable: formatBytes(movie.sizeBytes),
+        lastDownloadedAt: new Date().toISOString(),
+      });
     }
 
-    // ---- JSON MODE: return metadata + the streaming URL(s)
-    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-    const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost';
+    // DIRECT PASS-THROUGH DOWNLOAD STREAM
+    const wantsSinglePart = Number.isInteger(partNumber) && partNumber >= 1;
+    if (wantsSinglePart && partNumber > chunks.length) {
+      return res.status(404).json({
+        success: false,
+        message: `Part ${partNumber} does not exist — this movie has ${chunks.length} part(s).`,
+      });
+    }
 
-    // Multi-part movies: expose every Telegram part individually so the
-    // frontend can offer "Download Part 1", "Download Part 2", … buttons.
-    const parts = chunks.map((chunk, idx) => ({
-      part: idx + 1,
-      fileName: buildPartFileName(fileName, idx, chunks.length),
-      sizeBytes: chunk.chunkSize,
-      sizeReadable: formatBytes(chunk.chunkSize),
-      fileId: chunk.telegramFileId,
-      messageId: chunk.telegramMessageId,
-      downloadUrl: `${proto}://${host}/api/download/${movie.id}?dl=1&part=${idx + 1}`,
-      streamUrl: `${proto}://${host}/api/stream/${movie.id}?part=${idx + 1}`,
-    }));
+    const targetIdx = wantsSinglePart ? partNumber - 1 : 0;
+    const targetChunk = chunks[targetIdx];
+    const outFileName = wantsSinglePart
+      ? buildPartFileName(fileName, partNumber - 1, chunks.length)
+      : (chunks.length > 1 ? buildPartFileName(fileName, 0, chunks.length) : fileName);
 
-    // Prefer the chunker-persisted array; fall back to the chunk rows so
-    // movies cached before the telegramFileIds column existed still work.
-    const persistedFileIds = parseTelegramFileIds(movie.telegramFileIds);
-    const telegramFileIds = persistedFileIds.length > 0
-      ? persistedFileIds
-      : chunks.map((c) => c.telegramFileId);
-
-    return res.json({
-      success: true,
-      cached: true,
-      downloadUrl: `${proto}://${host}/api/download/${movie.id}?dl=1`,
-      streamUrl: `${proto}://${host}/api/stream/${movie.id}`,
-      parts,
-      chunkCount: chunks.length,
-      telegramFileIds,
-      movieId: movie.id,
-      title: movie.title,
-      fileName,
-      sizeBytes: movie.sizeBytes,
-      sizeReadable: formatBytes(movie.sizeBytes),
-      lastDownloadedAt: new Date().toISOString(),
+    // Try resolving directly from Telegram API URL / GramJS
+    const media = await resolveTelegramMedia({
+      messageId: targetChunk.telegramMessageId,
+      fileId: targetChunk.telegramFileId,
+      title: movieTitle,
     });
+
+    if (media) {
+      return await streamMediaToResponse({
+        req,
+        res,
+        document: media.document,
+        localFilePath: media.localFilePath,
+        fileSize: targetChunk.chunkSize || media.fileSize,
+        mimeType: 'application/octet-stream',
+        fileName: outFileName,
+      });
+    }
+
+    // Fallback: chunk pass-through stream concatenation
+    const streamChunks = wantsSinglePart ? [chunks[partNumber - 1]] : chunks;
+    const totalSize = streamChunks.reduce((sum, c) => sum + c.chunkSize, 0);
+
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${outFileName.replace(/[^\w.\- ]/g, '_')}"`);
+    res.setHeader('Content-Length', String(totalSize));
+
+    console.log(
+      `[PASS_THROUGH_DOWNLOAD] Streaming pass-through download for "${movie.title}"` +
+        (wantsSinglePart ? ` part ${partNumber}/${chunks.length}` : ` (${chunks.length} part(s) concatenated)`) +
+        ` (${formatBytes(totalSize)})`
+    );
+
+    const source = createChunkStream(streamChunks);
+    await pipeline(source, res);
+    console.log(`[PASS_THROUGH_DOWNLOAD] Download complete for "${movie.title}"`);
+    return;
   } catch (err) {
     if (res.headersSent) {
-      console.error('[CDN_API] Stream error after headers sent — destroying connection');
+      console.error('[PASS_THROUGH_DOWNLOAD] Stream error after headers sent — destroying connection');
       res.destroy();
       return;
     }
     const status = httpStatus(err);
-    console.error(`[CDN_API] GET /download failed (${status}):`, err.message);
+    console.error(`[PASS_THROUGH_DOWNLOAD] GET /download failed (${status}):`, err.message);
     return res.status(status).json({ success: false, message: err.message });
   }
 }
 
-router.get('/download/:idOrTitle', handleDownload);
+router.get('/download/:file_id', handleDownload);
 
 // ---------------------------------------------------------------------------
 // GET /status/:idOrTitle — cache state (does NOT touch the download timestamp)
@@ -308,191 +422,22 @@ router.get('/stats', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /stream/:file_id — Direct Stream / Download via GramJS MTProto Userbot
-//   Supports:
-//     - HTTP 206 Partial Content (Range requests: browser seeking & fast playback)
-//     - Zero-RAM direct socket piping with backpressure handling
-//     - Zero-Disk usage (never saved to VPS disk)
-//     - ?dl=1 / ?download=1: triggers attachment direct download
-//     - ?part=N: streams specific part for multi-chunk movies
+// GET /stream/:file_id — Direct Download Alias (Pass-Through Streaming)
+// Directs all /api/stream/:file_id requests to the direct download handler
 // ---------------------------------------------------------------------------
-export async function handleStream(req, res) {
-  try {
-    const { file_id } = req.params;
-    const isDownload = req.query.dl === '1' || req.query.download === '1';
-    const magnetLink = req.query.magnet || null;
-    const title = req.query.title || null;
-    const partNumber = parseInt(req.query.part, 10);
+export const handleStream = handleDownload;
 
-    // 1. Direct Telegram channel message ID (e.g. /api/stream/12345 or /api/stream/msg_12345)
-    const isNumericMsg = /^\d+$/.test(file_id);
-    const isMsgPrefixed = /^msg_(\d+)$/.test(file_id);
-    if (isNumericMsg || isMsgPrefixed) {
-      const msgId = isNumericMsg ? parseInt(file_id, 10) : parseInt(file_id.slice(4), 10);
-      const media = await resolveTelegramMedia({ messageId: msgId });
-      if (!media) {
-        return res.status(404).json({ success: false, message: `Message ${msgId} not found in Telegram channel.` });
-      }
-      return await streamMediaToResponse({
-        req,
-        res,
-        document: media.document,
-        localFilePath: media.localFilePath,
-        fileSize: media.fileSize,
-        mimeType: media.mimeType,
-        fileName: media.fileName,
-        isDownload,
-      });
-    }
-
-    // 2. Check if file_id is a MovieChunk id or telegramFileId
-    let chunk = await prisma.movieChunk.findFirst({
-      where: {
-        OR: [
-          { id: file_id },
-          { telegramFileId: file_id },
-        ],
-      },
-      include: { movie: true },
-    });
-
-    if (chunk) {
-      const movie = chunk.movie;
-      const partIdx = chunk.chunkIndex;
-      const outFileName = movie.fileName
-        ? buildPartFileName(movie.fileName, partIdx, 1)
-        : `${movie.title}.mp4`;
-      const media = await resolveTelegramMedia({
-        messageId: chunk.telegramMessageId,
-        fileId: chunk.telegramFileId,
-        title: movie.title,
-      });
-      if (!media) {
-        return res.status(404).json({ success: false, message: 'Telegram media for chunk could not be resolved.' });
-      }
-      return await streamMediaToResponse({
-        req,
-        res,
-        document: media.document,
-        localFilePath: media.localFilePath,
-        fileSize: chunk.chunkSize || media.fileSize,
-        mimeType: movie.mimeType || media.mimeType || 'video/mp4',
-        fileName: outFileName,
-        isDownload,
-      });
-    }
-
-    // 3. Check if file_id is a Movie ID or Movie Title in the cache database
-    const entry = await peekCacheEntry(file_id);
-    const activeMagnet = magnetLink || entry?.movie?.magnetLink || null;
-    const movieTitle = entry?.movie?.title || title || file_id;
-    const movieFileName = entry?.movie?.fileName || `${movieTitle}.mp4`;
-
-    // A. If movie is cached in Telegram with chunks, stream from Telegram MTProto
-    if (entry && entry.cached) {
-      const chunks = await prisma.movieChunk.findMany({
-        where: { movieId: entry.movie.id },
-        orderBy: { chunkIndex: 'asc' },
-      });
-
-      if (chunks.length > 0) {
-        const targetIdx = Number.isInteger(partNumber) && partNumber >= 1 && partNumber <= chunks.length
-          ? partNumber - 1
-          : 0;
-        const targetChunk = chunks[targetIdx];
-
-        await prisma.movie.update({
-          where: { id: entry.movie.id },
-          data: { lastDownloadedAt: new Date() },
-        });
-
-        const outFileName = chunks.length > 1
-          ? buildPartFileName(movieFileName, targetIdx, chunks.length)
-          : movieFileName;
-
-        const media = await resolveTelegramMedia({
-          messageId: targetChunk.telegramMessageId,
-          fileId: targetChunk.telegramFileId,
-          title: movieTitle,
-        });
-
-        if (media) {
-          return await streamMediaToResponse({
-            req,
-            res,
-            document: media.document,
-            localFilePath: media.localFilePath,
-            fileSize: targetChunk.chunkSize || media.fileSize,
-            mimeType: entry.movie.mimeType || media.mimeType || 'video/mp4',
-            fileName: outFileName,
-          });
-        }
-        console.warn(`[STREAM_API] Telegram media resolution failed for "${movieTitle}", attempting torrent stream fallback...`);
-      }
-    }
-
-    // B. If not yet cached in Telegram but a magnet link is available, stream torrent on-the-fly directly to client!
-    if (activeMagnet) {
-      console.log(`[STREAM_API] Streaming direct torrent download for "${movieTitle}"`);
-      // Non-blocking: ensure background caching is queued
-      cacheMovie({ title: movieTitle, magnetLink: activeMagnet, fallbackTitle: file_id }).catch(() => {});
-
-      return await streamTorrentFile({
-        magnetLink: activeMagnet,
-        req,
-        res,
-        fileName: movieFileName,
-      });
-    }
-
-    // C. Try resolving directly as Telegram Bot API file_id (Local Bot API / mapped volume)
-    if (config.telegram.configured) {
-      try {
-        const directMedia = await resolveTelegramMedia({ fileId: file_id, title: movieTitle });
-        if (directMedia && (directMedia.document || directMedia.localFilePath)) {
-          console.log(`[STREAM_API] Direct Telegram file_id resolved: ${file_id}`);
-          return await streamMediaToResponse({
-            req,
-            res,
-            document: directMedia.document,
-            localFilePath: directMedia.localFilePath,
-            fileSize: directMedia.fileSize,
-            mimeType: 'video/mp4',
-            fileName: movieFileName,
-            isDownload,
-          });
-        }
-      } catch (directErr) {
-        console.warn(`[STREAM_API] Direct file_id resolution failed for "${file_id}":`, directErr.message);
-      }
-    }
-
-    return res.status(404).json({
-      success: false,
-      message: 'Media file not found in Telegram CDN and no torrent magnet provided to stream.',
-    });
-  } catch (err) {
-    if (res.headersSent) {
-      console.error('[STREAM_API] Stream error after headers sent:', err.message);
-      res.destroy();
-      return;
-    }
-    const status = httpStatus(err);
-    console.error(`[STREAM_API] GET /stream failed (${status}):`, err.message);
-    return res.status(status).json({ success: false, message: err.message });
-  }
-}
-
-router.get('/stream/:file_id', handleStream);
+router.get('/stream/:file_id', handleDownload);
 
 // ---------------------------------------------------------------------------
 // Standalone routers: mounted at /api/download and /api/stream in server.js
 // ---------------------------------------------------------------------------
 const downloadRouter = express.Router();
+downloadRouter.get('/:file_id', handleDownload);
 downloadRouter.get('/:idOrTitle', handleDownload);
 
 const streamRouter = express.Router();
-streamRouter.get('/:file_id', handleStream);
+streamRouter.get('/:file_id', handleDownload);
 
 export { downloadRouter, streamRouter };
 export default router;

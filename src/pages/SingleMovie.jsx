@@ -29,25 +29,25 @@ const SingleMovie = () => {
     try {
       setLoading(true);
       setError(null);
-      
+
       console.log(`[MOVIE] Fetching movie ID: ${id}`);
-      
+
       const response = await fetch(`${API_BASE_URL}/movies/${id}`);
-      
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      
+
       const result = await response.json();
-      
+
       console.log('[MOVIE] API Response:', result);
       console.log('[MOVIE] Response type:', typeof result);
       console.log('[MOVIE] Result.data type:', typeof result?.data);
       console.log('[MOVIE] Result.success:', result?.success);
-      
+
       // SAFE DATA EXTRACTION - Handle both wrapped and direct response
       let movieData = null;
-      
+
       if (result?.success && result?.data) {
         // New structure: { success: true, data: {...} }
         movieData = result.data;
@@ -71,7 +71,7 @@ const SingleMovie = () => {
 
       if (movieData) {
         // Normalize downloadLinks and download_links to ensure both keys are populated arrays
-        const rawLinks = 
+        const rawLinks =
           movieData.download_links ||
           movieData.downloadLinks ||
           movieData.data?.download_links ||
@@ -87,7 +87,7 @@ const SingleMovie = () => {
           try {
             const parsed = JSON.parse(rawLinks);
             if (Array.isArray(parsed)) linksArray = parsed;
-          } catch {}
+          } catch { }
         }
         movieData.download_links = linksArray;
         movieData.downloadLinks = linksArray;
@@ -105,7 +105,7 @@ const SingleMovie = () => {
       console.error('[MOVIE] Error name:', err.name);
       console.error('[MOVIE] Error message:', err.message);
       console.error('[MOVIE] Error stack:', err.stack);
-      
+
       setError(err.message || 'Unable to connect to server');
       setMovie(null);
     } finally {
@@ -150,7 +150,7 @@ const SingleMovie = () => {
             activeStateLinks = parsed;
             break;
           }
-        } catch {}
+        } catch { }
       }
     }
   }
@@ -167,8 +167,8 @@ const SingleMovie = () => {
 
   const directLinks = Array.isArray(parsedLinks) ? parsedLinks : [];
 
-  const hasTorrents = (movie?.torrents || movie?.data?.torrents) && 
-    Array.isArray(movie?.torrents || movie?.data?.torrents) && 
+  const hasTorrents = (movie?.torrents || movie?.data?.torrents) &&
+    Array.isArray(movie?.torrents || movie?.data?.torrents) &&
     (movie?.torrents || movie?.data?.torrents).length > 0;
   const hasDirectLinks = directLinks.length > 0;
   const hasDownloadOptions = hasTorrents || hasDirectLinks;
@@ -195,8 +195,8 @@ const SingleMovie = () => {
           <p className="text-[#8b94a6] mb-6">
             {error || 'The movie you are looking for is not available.'}
           </p>
-          <Link 
-            to="/" 
+          <Link
+            to="/"
             className="inline-block bg-[var(--accent)] text-[#0f1115] font-bold px-6 py-3 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg shadow-[var(--accent)]/20 active:scale-95"
           >
             Return to Home{isLk ? ' | මුල් පිටුවට යන්න' : ''}
@@ -218,8 +218,8 @@ const SingleMovie = () => {
           <p className="text-[#8b94a6] mb-6">
             The movie data is incomplete or invalid.
           </p>
-          <Link 
-            to="/" 
+          <Link
+            to="/"
             className="inline-block bg-[var(--accent)] text-[#0f1115] font-bold px-6 py-3 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg shadow-[var(--accent)]/20 active:scale-95"
           >
             Return to Home{isLk ? ' | මුල් පිටුවට යන්න' : ''}
@@ -233,8 +233,8 @@ const SingleMovie = () => {
     <div className="min-h-screen bg-[#0f1115]">
       {/* Back Button */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 animate-fadeInUp">
-        <Link 
-          to="/" 
+        <Link
+          to="/"
           className="inline-flex items-center space-x-2 text-[#8b94a6] hover:text-[var(--accent)] transition-accent"
         >
           <ChevronLeft className="w-5 h-5" />
@@ -282,11 +282,11 @@ const SingleMovie = () => {
                 FREE STREAMING
               </span>
             </div>
-            
+
             {/* VIDSRC EMBED - MOVIE OR TV SHOW */}
             <iframe
               src={
-                movie?.is_tv 
+                movie?.is_tv
                   ? `https://vidsrc.me/embed/tv?tmdb=${movie?.id || ''}&season=1&episode=1`
                   : `https://vidsrc.me/embed/movie?imdb=${movie?.imdb_id || ''}`
               }
@@ -297,9 +297,9 @@ const SingleMovie = () => {
               title={`Watch ${movie?.title || 'Movie'}`}
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             />
-            
+
             <p className="text-[#8b94a6] text-sm text-center">
-              {movie?.is_tv 
+              {movie?.is_tv
                 ? `Streaming ${movie?.title || 'TV Show'} - Season 1, Episode 1. More episodes available in player.`
                 : `Stream ${movie?.title || 'Movie'} in HD quality directly in your browser`
               }
@@ -311,7 +311,7 @@ const SingleMovie = () => {
       {/* Movie Details Section */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-16">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
+
           {/* Left Column: Poster & Info */}
           <div className="lg:col-span-1 animate-fadeInUp stagger-3">
             <div className="sticky top-24">
@@ -323,7 +323,7 @@ const SingleMovie = () => {
                   e.target.src = DEFAULT_POSTER;
                 }}
               />
-              
+
               {/* IMDb Rating Box */}
               <div className="mt-4 glass-card rounded-2xl p-4 text-center">
                 <div className="flex items-center justify-center space-x-2 mb-2">
@@ -375,7 +375,7 @@ const SingleMovie = () => {
 
           {/* Right Column: Details, Trailer Button, Downloads */}
           <div className="lg:col-span-2 animate-fadeInUp stagger-4">
-            
+
             {/* Genres */}
             {movie?.genres && Array.isArray(movie.genres) && movie.genres.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-6">
@@ -449,7 +449,7 @@ const SingleMovie = () => {
                     <X className="w-6 h-6" />
                   </button>
                 </div>
-                
+
                 {/* YouTube Trailer Embed */}
                 <iframe
                   src={`https://www.youtube.com/embed/${movie.yt_trailer_code}`}
@@ -475,20 +475,20 @@ const SingleMovie = () => {
 
               {/* Sinhala Subtitles Search Button */}
               {isLk && (
-              <div className="mb-6">
-                <a
-                  href={`https://www.baiscope.lk/?s=${encodeURIComponent(movie?.title || '')}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 transform hover:scale-[1.02] flex items-center justify-center space-x-3 shadow-lg shadow-orange-500/30 active:scale-95"
-                >
-                  <MessageSquare className="w-6 h-6" />
-                  <span>Sinhala Subtitles | සිංහල උපසිරැසි</span>
-                </a>
-                <p className="text-[#8b94a6] text-sm mt-2 text-center">
-                  Search for Sinhala subtitles on Baiscope
-                </p>
-              </div>
+                <div className="mb-6">
+                  <a
+                    href={`https://www.baiscope.lk/?s=${encodeURIComponent(movie?.title || '')}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 transform hover:scale-[1.02] flex items-center justify-center space-x-3 shadow-lg shadow-orange-500/30 active:scale-95"
+                  >
+                    <MessageSquare className="w-6 h-6" />
+                    <span>Sinhala Subtitles | සිංහල උපසිරැසි</span>
+                  </a>
+                  <p className="text-[#8b94a6] text-sm mt-2 text-center">
+                    Search for Sinhala subtitles on Baiscope
+                  </p>
+                </div>
               )}
 
               {/* Direct Download Links Section (Google Drive, Mega, Pixeldrain) */}
@@ -537,61 +537,61 @@ const SingleMovie = () => {
 
                   {/* Download Buttons - 3 Button System Per Quality */}
                   {hasTorrents && (
-                  <div className="space-y-4 relative z-10">
-                    {movie?.torrents?.map((torrent, index) => {
-                      if (!torrent || !torrent.url) return null;
-                      
-                      return (
-                        <div key={`torrent-${index}-${torrent.quality || index}`} className="glass-card rounded-xl p-4 relative z-10 focus-within:z-50 hover:z-20">
-                          {/* Quality Header with Provider Badge */}
-                          <div className="mb-3">
-                            <div className="flex items-center justify-between flex-wrap gap-2">
-                              <h4 className="text-white font-bold text-lg">
-                                Download Link {index + 1}: {torrent.quality || 'Unknown Quality'}
-                                {torrent.size && (
-                                  <span className="text-[#8b94a6] text-sm font-normal ml-2">
-                                    ({torrent.size})
+                    <div className="space-y-4 relative z-10">
+                      {movie?.torrents?.map((torrent, index) => {
+                        if (!torrent || !torrent.url) return null;
+
+                        return (
+                          <div key={`torrent-${index}-${torrent.quality || index}`} className="glass-card rounded-xl p-4 relative z-10 focus-within:z-50 hover:z-20">
+                            {/* Quality Header with Provider Badge */}
+                            <div className="mb-3">
+                              <div className="flex items-center justify-between flex-wrap gap-2">
+                                <h4 className="text-white font-bold text-lg">
+                                  Download Link {index + 1}: {torrent.quality || 'Unknown Quality'}
+                                  {torrent.size && (
+                                    <span className="text-[#8b94a6] text-sm font-normal ml-2">
+                                      ({torrent.size})
+                                    </span>
+                                  )}
+                                </h4>
+                                {torrent.provider && (
+                                  <span className="bg-[var(--accent)]/20 border border-[var(--accent)]/30 text-[var(--accent)] px-3 py-1 rounded-full text-xs font-bold">
+                                    {torrent.provider}
                                   </span>
                                 )}
-                              </h4>
-                              {torrent.provider && (
-                                <span className="bg-[var(--accent)]/20 border border-[var(--accent)]/30 text-[var(--accent)] px-3 py-1 rounded-full text-xs font-bold">
-                                  {torrent.provider}
-                                </span>
+                              </div>
+                              {torrent.seeders !== undefined && (
+                                <p className="text-[#8b94a6] text-xs mt-1">
+                                  Seeders: {torrent.seeders} | Leechers: {torrent.leechers || 0}
+                                </p>
                               )}
                             </div>
-                            {torrent.seeders !== undefined && (
-                              <p className="text-[#8b94a6] text-xs mt-1">
-                                Seeders: {torrent.seeders} | Leechers: {torrent.leechers || 0}
-                              </p>
-                            )}
-                          </div>
 
-                          {/* Download & Direct Stream buttons:
+                            {/* Download & Direct Stream buttons:
                               1. DownloadButton: opens styled dropdown with DDLs + WebTorrent option.
                               2. DirectStreamButton: direct Telegram MTProto Userbot streaming & direct download. */}
-                          <div className="mt-4 flex flex-col sm:flex-row items-stretch gap-3 relative z-10 focus-within:z-50">
-                            <DownloadButton
-                              movieId={movie?.title}
-                              title={movie?.title}
-                              magnetLink={torrent.url}
-                              downloadLinks={directLinks}
-                              movie={movie}
-                              label={isLk ? 'Download | බාගත කරන්න' : 'Download'}
-                              className="w-full bg-[#ff9900] text-[#0f1115] hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] hover:-translate-y-1"
-                            />
-                            <DirectStreamButton
-                              movieId={movie?.title}
-                              title={movie?.title}
-                              magnetLink={torrent.url}
-                              label={isLk ? 'Direct Download | සෘජු බාගත කිරීම' : 'Direct Download'}
-                              className="w-full sm:w-auto flex-1"
-                            />
+                            <div className="mt-4 flex flex-col sm:flex-row items-stretch gap-3 relative z-10 focus-within:z-50">
+                              <DownloadButton
+                                movieId={movie?.title}
+                                title={movie?.title}
+                                magnetLink={torrent.url}
+                                downloadLinks={directLinks}
+                                movie={movie}
+                                label={isLk ? 'Download | බාගත කරන්න' : 'Download'}
+                                className="w-full bg-[#ff9900] text-[#0f1115] hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] hover:-translate-y-1"
+                              />
+                              <DirectStreamButton
+                                movieId={movie?.title}
+                                title={movie?.title}
+                                magnetLink={torrent.url}
+                                label={isLk ? 'Direct Download | සෘජු බාගත කිරීම' : 'Direct Download'}
+                                className="w-full sm:w-auto flex-1"
+                              />
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        );
+                      })}
+                    </div>
                   )}
 
                   {/* Automated Report & Fix Broken Link */}

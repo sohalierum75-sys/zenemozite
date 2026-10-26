@@ -218,7 +218,7 @@ export function resolveLocalDiskPath(returnedFilePath) {
       try {
         const stat = fs.statSync(candidate);
         if (stat.isFile()) return candidate;
-      } catch {}
+      } catch { }
     }
   }
 
@@ -251,21 +251,22 @@ export async function getFilePath(fileId) {
 
 /**
  * Step 2 of reading a file back: open a Readable stream of the file content.
- * Checks the mapped local volume first to read directly from disk with fs.createReadStream,
- * bypassing HTTP entirely. Falls back to Local Bot API HTTP stream if needed.
+ * Direct Pass-Through HTTP Streaming: Initiates an HTTP stream from the Local
+ * Telegram Bot API URL immediately and returns the stream socket, without
+ * waiting for any file to be saved to disk first (Zero-Storage).
  * @param {string} filePath — the value returned by getFilePath()
+ * @param {object} options — optional range options ({ start, end })
  * @returns {Promise<import('stream').Readable>}
  */
 export async function openFileStream(filePath, options = {}) {
-  const localDiskPath = resolveLocalDiskPath(filePath);
-  if (localDiskPath && fs.existsSync(localDiskPath)) {
-    console.log(`[TELEGRAM_STORE] Direct disk stream from mapped volume: ${localDiskPath}`);
-    return fs.createReadStream(localDiskPath, options);
-  }
-
   const url = `${config.telegram.localApiUrl}/file/bot${config.telegram.botToken}/${filePath}`;
-  console.log(`[TELEGRAM_STORE] Falling back to Local Bot API HTTP stream: ${url}`);
-  const res = await axios.get(url, { responseType: 'stream', timeout: 0 });
+  console.log(`[TELEGRAM_STORE] Direct pass-through HTTP stream: ${url}`);
+  const headers = {};
+  if (options.start !== undefined || options.end !== undefined) {
+    const endStr = options.end !== undefined ? options.end : '';
+    headers.Range = `bytes=${options.start || 0}-${endStr}`;
+  }
+  const res = await axios.get(url, { headers, responseType: 'stream', timeout: 0 });
   return res.data;
 }
 

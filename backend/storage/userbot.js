@@ -317,78 +317,12 @@ export async function streamMediaToResponse({
   }
 
   // ---------------------------------------------------------------------------
-  // 2. Direct Disk Stream from Local Bot API mapped volume (fs.createReadStream)
+  // 2. Direct HTTP Stream Piping (Pass-through from Local Telegram API)
+  // Initiates HTTP stream immediately from Telegram API URL and directly pipes
+  // to the Express response (res) with attachment headers.
+  // Zero-Storage: starts downloading in browser immediately without saving to VPS disk!
   // ---------------------------------------------------------------------------
   if (localFilePath) {
-    const diskPath = resolveLocalDiskPath(localFilePath);
-    if (diskPath && fs.existsSync(diskPath)) {
-      try {
-        const stats = fs.statSync(diskPath);
-        const totalSize = stats.size || fileSize;
-        const contentType = mimeType || 'video/mp4';
-
-        console.log(`[LOCAL_DISK_STREAM] Streaming directly from mapped volume: "${diskPath}" (${formatBytes(totalSize)})`);
-
-        res.setHeader('Accept-Ranges', 'bytes');
-        res.setHeader('Content-Type', contentType);
-        res.setHeader('Content-Disposition', isDownload ? `attachment; filename="${safeFileName}"` : `inline; filename="${safeFileName}"`);
-
-        if (rangeHeader) {
-          const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
-          if (match) {
-            const start = parseInt(match[1], 10);
-            const end = match[2] ? parseInt(match[2], 10) : totalSize - 1;
-
-            if (start >= totalSize || end >= totalSize) {
-              res.setHeader('Content-Range', `bytes */${totalSize}`);
-              return res.status(416).json({ success: false, message: 'Requested range not satisfiable' });
-            }
-
-            const contentLength = end - start + 1;
-            res.status(206);
-            res.setHeader('Content-Range', `bytes ${start}-${end}/${totalSize}`);
-            res.setHeader('Content-Length', contentLength);
-
-            const fileStream = fs.createReadStream(diskPath, { start, end });
-            req.once('close', () => {
-              if (!fileStream.destroyed) fileStream.destroy();
-            });
-
-            await pipeline(fileStream, res);
-            console.log(`[LOCAL_DISK_STREAM] Completed range stream: ${start}-${end}/${totalSize} for "${safeFileName}"`);
-            return;
-          }
-        }
-
-        // Full file stream (no range)
-        res.status(200);
-        res.setHeader('Content-Length', totalSize);
-
-        const fileStream = fs.createReadStream(diskPath);
-        req.once('close', () => {
-          if (!fileStream.destroyed) fileStream.destroy();
-        });
-
-        await pipeline(fileStream, res);
-        console.log(`[LOCAL_DISK_STREAM] Completed full stream for "${safeFileName}"`);
-        return;
-      } catch (err) {
-        if (err.code === 'ERR_STREAM_PREMATURE_CLOSE') {
-          console.log(`[LOCAL_DISK_STREAM] Stream cancelled by client for "${safeFileName}"`);
-          return;
-        }
-        console.error('[LOCAL_DISK_STREAM] Disk stream failed:', err.message);
-        if (!res.headersSent) {
-          return res.status(500).json({ success: false, message: err.message });
-        }
-        res.destroy();
-        return;
-      }
-    }
-
-    // ---------------------------------------------------------------------------
-    // 3. Fallback: Local Bot API HTTP Stream (when volume mount is not direct)
-    // ---------------------------------------------------------------------------
     const streamUrl = `${config.telegram.localApiUrl}/file/bot${config.telegram.botToken}/${localFilePath}`;
     const headers = {};
     if (rangeHeader) {
@@ -396,36 +330,62 @@ export async function streamMediaToResponse({
     }
 
     try {
-      console.log(`[USERBOT_STREAM] Fallback: Streaming from Local Bot API HTTP: ${streamUrl}`);
+      console.log(`[PASS_THROUGH_STREAM] Piping direct from Telegram API URL: ${streamUrl}`);
       const response = await axios.get(streamUrl, {
         headers,
         responseType: 'stream',
         timeout: 0,
       });
 
-      res.setHeader('Content-Disposition', isDownload ? `attachment; filename="${safeFileName}"` : `inline; filename="${safeFileName}"`);
-      res.setHeader('Content-Type', mimeType || 'video/mp4');
+      // Force direct download headers
+      res.setHeader('Content-Disposition', `attachment; filename="${safeFileName}"`);
+      res.setHeader('Content-Type', 'application/octet-stream');
       if (response.headers['content-length']) {
         res.setHeader('Content-Length', response.headers['content-length']);
+      } else if (fileSize) {
+        res.setHeader('Content-Length', String(fileSize));
       }
       if (response.headers['content-range']) {
         res.setHeader('Content-Range', response.headers['content-range']);
       }
       res.setHeader('Accept-Ranges', 'bytes');
-      res.status(response.status);
+      res.status(response.status || 200);
 
+      // Handle client cancellation / disconnect
       req.once('close', () => {
-        if (response.data?.destroy) response.data.destroy();
+        if (response.data && response.data.destroy) {
+          response.data.destroy();
+        }
       });
 
+      // Zero-Storage cleanup: if Local Bot API cached a copy in tg-api-data, purge it
+      const cleanupDisk = () => {
+        setTimeout(() => {
+          try {
+            const diskPath = resolveLocalDiskPath(localFilePath);
+            if (diskPath && fs.existsSync(diskPath)) {
+              fs.unlinkSync(diskPath);
+              console.log(`[ZERO_STORAGE] Purged cached file from local volume: "${diskPath}"`);
+            }
+          } catch (e) {
+            // ignore
+          }
+        }, 1500);
+      };
+
+      res.once('finish', cleanupDisk);
+      req.once('close', cleanupDisk);
+
+      // Directly pipe Telegram HTTP stream into Express response
       await pipeline(response.data, res);
+      console.log(`[PASS_THROUGH_STREAM] Completed streaming "${safeFileName}" to client`);
       return;
     } catch (err) {
       if (err.code === 'ERR_STREAM_PREMATURE_CLOSE') {
-        console.log(`[USERBOT_STREAM] Fallback download cancelled by user for "${safeFileName}"`);
+        console.log(`[PASS_THROUGH_STREAM] Download cancelled by user for "${safeFileName}"`);
         return;
       }
-      console.error('[USERBOT_STREAM] Fallback Local Bot API stream failed:', err.message);
+      console.error('[PASS_THROUGH_STREAM] Direct HTTP stream piping failed:', err.message);
       if (!res.headersSent) {
         return res.status(502).json({ success: false, message: 'Stream failed from Telegram source.' });
       }

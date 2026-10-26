@@ -15,7 +15,7 @@ const HeroBanner = ({ media, mediaType = 'movie' }) => {
   const rating = media.rating || media.vote_average;
   const runtime = media.runtime || media.episode_run_time?.[0];
   const genres = media.genres || [];
-  
+
   const linkPath = mediaType === 'tv' ? `/tv/${media.id}` : `/movie/${media.id}`;
 
   return (

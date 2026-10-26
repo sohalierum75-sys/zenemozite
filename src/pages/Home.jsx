@@ -39,10 +39,10 @@ const MovieCard = ({ movie, className = '', index = 0 }) => {
               e.target.src = 'https://via.placeholder.com/300x450?text=No+Poster';
             }}
           />
-          
+
           {/* Overlay on Hover */}
           <div className="absolute inset-0 bg-gradient-to-t from-[#0f1115] via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-          
+
           {/* IMDb Rating Badge */}
           {movie.rating && (
             <div className="absolute top-3 right-3 bg-[var(--accent)] text-[#0f1115] px-2 py-1 rounded-lg flex items-center space-x-1 font-bold text-sm shadow-lg shadow-[var(--accent)]/20 transition-accent">
@@ -57,7 +57,7 @@ const MovieCard = ({ movie, className = '', index = 0 }) => {
           <h3 className="text-white font-bold text-sm md:text-base mb-1 truncate group-hover:text-[var(--accent)] transition-accent">
             {movie.title}
           </h3>
-          
+
           <div className="flex items-center justify-between text-xs md:text-sm">
             <span className="text-[#8b94a6]">{movie.year}</span>
           </div>
@@ -69,8 +69,8 @@ const MovieCard = ({ movie, className = '', index = 0 }) => {
 
 // Premium Skeleton Card
 const SkeletonCard = ({ index = 0 }) => (
-  <div 
-    className="skeleton rounded-2xl overflow-hidden animate-fadeInUp" 
+  <div
+    className="skeleton rounded-2xl overflow-hidden animate-fadeInUp"
     style={{ animationDelay: `${40 + (index * 40)}ms` }}
   >
     <div className="aspect-[2/3] bg-[#1a1c23]/40" />
@@ -101,19 +101,19 @@ const Home = () => {
         setLoading(true);
       }
       setError(null);
-      
+
       console.log('[FRONTEND] Fetching from:', `${API_BASE_URL}/movies?page=${pageNum}`);
-      
+
       const response = await fetch(`${API_BASE_URL}/movies?page=${pageNum}`);
-      
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      
+
       const result = await response.json();
-      
+
       console.log('[FRONTEND] API Response:', result);
-      
+
       if (result.success && Array.isArray(result.data)) {
         if (append) {
           setMovies(prevMovies => [...prevMovies, ...result.data]);
