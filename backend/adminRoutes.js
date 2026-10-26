@@ -594,4 +594,61 @@ router.delete('/download-links/:linkId', async (req, res) => {
   }
 });
 
+// ==============================================================================
+// AUTOMATION & CRON SYNC ROUTES
+// ==============================================================================
+
+/**
+ * GET /api/admin/automation/status
+ * Get the current status of the movie automation cron and last sync metrics
+ */
+router.get('/automation/status', async (req, res) => {
+  try {
+    const { getMovieCronStatus } = await import('./cron/movieSync.js');
+    const status = getMovieCronStatus();
+    const movieCount = await prisma.movie.count();
+    const linkCount = await prisma.downloadLink.count();
+
+    res.json({
+      success: true,
+      data: {
+        ...status,
+        database: {
+          totalMovies: movieCount,
+          totalDownloadLinks: linkCount
+        }
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/admin/automation/sync
+ * Manually trigger the movie fetching & link extraction job immediately
+ */
+router.post('/automation/sync', async (req, res) => {
+  try {
+    const { limit = 50, page = 1 } = req.body || {};
+    const { runMovieAutomation } = await import('./services/movieAutomation.js');
+
+    // Run sync and await result
+    const result = await runMovieAutomation({
+      limit: parseInt(limit, 10) || 50,
+      page: parseInt(page, 10) || 1
+    });
+
+    res.json({
+      success: result.status === 'success',
+      message: `Sync finished with status: ${result.status}`,
+      data: result
+    });
+  } catch (err) {
+    console.error('[ADMIN] Error triggering automation sync:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;
+

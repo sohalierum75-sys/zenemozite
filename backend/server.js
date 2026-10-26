@@ -7,6 +7,7 @@ import hybridCacheRoutes, { downloadRouter, streamRouter } from './storage/route
 import { fetchAndCacheMovies, createTMDBListFetcher } from './listCache.js';
 import { startWorker } from './storage/worker.js';
 import adminRouter, { getDownloadLinksForMovie } from './adminRoutes.js';
+import { startMovieCron } from './cron/movieSync.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -3224,6 +3225,13 @@ try {
   startWorker();
 } catch (err) {
   console.error('[SERVER] CDN background worker failed to start (API server continues):', err && err.message);
+}
+
+// Start the 12-hour automated movie & direct links fetching cron job (node-cron)
+try {
+  startMovieCron();
+} catch (err) {
+  console.error('[SERVER] Movie automation cron failed to start (API server continues):', err && err.message);
 }
 
 app.listen(PORT, () => {
