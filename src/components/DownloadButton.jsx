@@ -95,38 +95,44 @@ const DownloadButton = ({
   // 1. Add Console Log to inspect state
   console.log("Movie Data State:", movie);
 
-  // 1. Data Mapping: Correctly extract the links array from downloadLinks, download_links, or movie object
-  // Supports arrays, JSON strings, nested movie.data.download_links, and both camelCase and snake_case keys
-  const linksList = useMemo(() => {
-    const raw = (Array.isArray(downloadLinks) && downloadLinks.length > 0)
-      ? downloadLinks
-      : (Array.isArray(download_links) && download_links.length > 0)
-      ? download_links
-      : (Array.isArray(movie?.download_links) && movie.download_links.length > 0)
-      ? movie.download_links
-      : (Array.isArray(movie?.downloadLinks) && movie.downloadLinks.length > 0)
-      ? movie.downloadLinks
-      : (Array.isArray(movie?.data?.download_links) && movie.data.download_links.length > 0)
-      ? movie.data.download_links
-      : (Array.isArray(movie?.data?.downloadLinks) && movie.data.downloadLinks.length > 0)
-      ? movie.data.downloadLinks
-      : (downloadLinks || download_links || movie?.download_links || movie?.downloadLinks || movie?.data?.download_links || movie?.data?.downloadLinks || []);
+  // 1. Extract the Links Safely: Create a variable before the return statement that checks all possible paths to the links array
+  // We check for actual non-empty arrays first to avoid JS [] truthy short-circuiting
+  const candidates = [
+    downloadLinks,
+    download_links,
+    movie?.download_links,
+    movie?.downloadLinks,
+    movie?.data?.download_links,
+    movie?.data?.downloadLinks
+  ];
 
-    if (Array.isArray(raw)) {
-      return raw.filter(l => l && (l.url || l.quality));
+  let rawLinks = candidates.find(c => Array.isArray(c) && c.length > 0);
+  if (!rawLinks) {
+    for (const c of candidates) {
+      if (typeof c === 'string' && c.trim().length > 2 && c.trim() !== '[]') {
+        try {
+          const parsed = JSON.parse(c);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            rawLinks = parsed;
+            break;
+          }
+        } catch {}
+      }
     }
+  }
 
-    if (typeof raw === 'string') {
-      try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          return parsed.filter(l => l && (l.url || l.quality));
-        }
-      } catch {}
-    }
+  // Exact fallback structure requested:
+  const linksArray = rawLinks || movie?.download_links || movie?.downloadLinks || movie?.data?.download_links || movie?.data?.downloadLinks || downloadLinks || download_links || [];
+  // If it's stored as a stringified JSON by mistake, parse it:
+  let parsedLinks = linksArray;
+  try {
+    parsedLinks = typeof linksArray === 'string' ? JSON.parse(linksArray) : linksArray;
+  } catch (err) {
+    console.error("Failed to parse linksArray JSON:", err);
+    parsedLinks = [];
+  }
 
-    return [];
-  }, [downloadLinks, download_links, movie]);
+  const linksList = Array.isArray(parsedLinks) ? parsedLinks : [];
 
   // Close dropdown on outside click or Touch
   useEffect(() => {
@@ -247,15 +253,17 @@ const DownloadButton = ({
                   {linksList.length} available
                 </span>
               </div>
-              {linksList.map((link, idx) => {
+              {linksList.map((rawLink, idx) => {
+                const link = typeof rawLink === 'string' ? { url: rawLink, quality: '1080p', provider: 'Direct Cloud' } : (rawLink || {});
+                const linkUrl = link.url || link.link || (typeof rawLink === 'string' ? rawLink : '');
                 const style = getProviderStyle(link.provider);
                 const qualityBadge = getQualityBadge(link.quality);
-                const isSelected = lastClickedUrl === link.url;
+                const isSelected = lastClickedUrl === linkUrl;
 
                 return (
                   <button
-                    key={link.id || `ddl-${idx}-${link.url || link.quality}`}
-                    onClick={() => handleLinkClick(link.url)}
+                    key={link.id || `ddl-${idx}-${linkUrl || link.quality || idx}`}
+                    onClick={() => handleLinkClick(linkUrl)}
                     className={`w-full text-left p-3 rounded-xl border transition-all duration-200 flex items-center justify-between group active:scale-[0.98] cursor-pointer ${style.bg} ${style.border}`}
                   >
                     <div className="flex items-center space-x-3 overflow-hidden">

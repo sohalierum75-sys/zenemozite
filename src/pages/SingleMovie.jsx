@@ -132,22 +132,40 @@ const SingleMovie = () => {
   // 1. Add Console Log to inspect state
   console.log("Movie Data State:", movie);
 
-  // 2. Fix Data Path: Check movie?.download_links, movie?.downloadLinks, movie?.data?.download_links, movie?.data?.downloadLinks
-  const rawStateLinks = 
-    movie?.download_links ||
-    movie?.downloadLinks ||
-    movie?.data?.download_links ||
-    movie?.data?.downloadLinks;
+  // 1. Extract the Links Safely: Create a variable before the return statement that checks all possible paths to the links array
+  const candidateList = [
+    movie?.download_links,
+    movie?.downloadLinks,
+    movie?.data?.download_links,
+    movie?.data?.downloadLinks,
+  ];
 
-  let directLinks = [];
-  if (Array.isArray(rawStateLinks)) {
-    directLinks = rawStateLinks;
-  } else if (typeof rawStateLinks === 'string') {
-    try {
-      const parsed = JSON.parse(rawStateLinks);
-      if (Array.isArray(parsed)) directLinks = parsed;
-    } catch {}
+  let activeStateLinks = candidateList.find(c => Array.isArray(c) && c.length > 0);
+  if (!activeStateLinks) {
+    for (const c of candidateList) {
+      if (typeof c === 'string' && c.trim().length > 2 && c.trim() !== '[]') {
+        try {
+          const parsed = JSON.parse(c);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            activeStateLinks = parsed;
+            break;
+          }
+        } catch {}
+      }
+    }
   }
+
+  const linksArray = activeStateLinks || movie?.download_links || movie?.downloadLinks || movie?.data?.download_links || movie?.data?.downloadLinks || [];
+  // If it's stored as a stringified JSON by mistake, parse it:
+  let parsedLinks = linksArray;
+  try {
+    parsedLinks = typeof linksArray === 'string' ? JSON.parse(linksArray) : linksArray;
+  } catch (err) {
+    console.error("Failed to parse linksArray JSON:", err);
+    parsedLinks = [];
+  }
+
+  const directLinks = Array.isArray(parsedLinks) ? parsedLinks : [];
 
   const hasTorrents = (movie?.torrents || movie?.data?.torrents) && 
     Array.isArray(movie?.torrents || movie?.data?.torrents) && 
