@@ -368,6 +368,97 @@ app.use('/api/stream', streamRouter);
 // Admin routes for managing movies and direct download links (DDL)
 app.use('/api/admin', adminRouter);
 
+/**
+ * GET /api/sync-now
+ * Secure manual endpoint that immediately triggers the movie scraper and download links sync.
+ * Supports optional secret key protection via SYNC_SECRET env var (?key=YOUR_SECRET).
+ */
+app.get('/api/sync-now', async (req, res) => {
+  const syncSecret = process.env.SYNC_SECRET;
+  if (syncSecret) {
+    const providedKey = req.query.key || req.query.secret || req.headers['x-sync-secret'];
+    if (providedKey !== syncSecret) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: invalid or missing sync secret key. Pass ?key=YOUR_SECRET'
+      });
+    }
+  }
+
+  console.log(`\n[SYNC-NOW] Immediate sync triggered via GET /api/sync-now from ${req.ip} at ${new Date().toISOString()}`);
+
+  try {
+    const limit = parseInt(req.query.limit, 10) || 50;
+    const page = parseInt(req.query.page, 10) || 1;
+
+    const { runMovieAutomation, getAutomationStatus } = await import('./services/movieAutomation.js');
+
+    const currentStatus = getAutomationStatus();
+    if (currentStatus.isSyncRunning) {
+      return res.json({
+        success: true,
+        message: 'Movie synchronization is already running in the background.',
+        data: currentStatus
+      });
+    }
+
+    const result = await runMovieAutomation({ limit, page });
+
+    const totalMovies = await prisma.movie.count().catch(() => 0);
+    const totalLinks = await prisma.downloadLink.count().catch(() => 0);
+
+    return res.json({
+      success: result.status === 'success',
+      message: `Sync completed: ${result.moviesSaved} movies updated with ${result.linksSaved} download links`,
+      summary: {
+        status: result.status,
+        sourceUsed: result.sourceUsed,
+        moviesProcessed: result.moviesProcessed,
+        moviesSaved: result.moviesSaved,
+        linksSaved: result.linksSaved,
+        durationMs: result.durationMs,
+        database: {
+          totalMovies,
+          totalDownloadLinks: totalLinks
+        }
+      },
+      details: result
+    });
+  } catch (error) {
+    console.error('[SYNC-NOW] Manual sync failed:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/sync-status
+ * Check current automation and scheduler status
+ */
+app.get('/api/sync-status', async (req, res) => {
+  try {
+    const { getMovieCronStatus } = await import('./cron/movieSync.js');
+    const cronStatus = getMovieCronStatus();
+    const totalMovies = await prisma.movie.count().catch(() => 0);
+    const totalLinks = await prisma.downloadLink.count().catch(() => 0);
+
+    return res.json({
+      success: true,
+      data: {
+        ...cronStatus,
+        database: {
+          totalMovies,
+          totalDownloadLinks: totalLinks
+        }
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Serve static files from React app in production
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -2289,25 +2380,67 @@ app.get('/api/movies/:id', async (req, res) => {
       ...memCached,
       data: {
         ...memCached.data,
-        download_links: ddlLinks
+        download_links: ddlLinks.length > 0 ? ddlLinks : (memCached.data.download_links || []),
+        downloadLinks: ddlLinks.length > 0 ? ddlLinks : (memCached.data.downloadLinks || [])
       }
     });
   }
   
   // STEP 2: Check Prisma database (persistent cache)
   try {
+    const idInt = parseInt(movieId, 10);
+
+    // 1. Check Movie table including related downloadLinks
+    const movieWithLinks = await prisma.movie.findFirst({
+      where: {
+        OR: [
+          { id: movieId },
+          ...(Number.isInteger(idInt) ? [{ tmdbId: idInt }] : [])
+        ]
+      },
+      include: {
+        downloadLinks: true
+      }
+    }).catch(() => null);
+
+    // 2. Check MediaCache table
     const dbCached = await prisma.mediaCache.findUnique({
       where: { tmdbId: movieId }
-    });
+    }).catch(() => null);
+
+    // Extract DDL links from related downloadLinks or fallback
+    let ddlLinks = [];
+    if (movieWithLinks?.downloadLinks && movieWithLinks.downloadLinks.length > 0) {
+      ddlLinks = movieWithLinks.downloadLinks.map(l => ({
+        id: l.id,
+        movieId: l.movieId,
+        tmdbId: l.tmdbId,
+        provider: l.provider,
+        quality: l.quality,
+        url: l.url,
+        size: l.size || null,
+        createdAt: l.createdAt
+      }));
+    } else if (movieWithLinks?.download_links) {
+      try {
+        const parsed = typeof movieWithLinks.download_links === 'string'
+          ? JSON.parse(movieWithLinks.download_links)
+          : movieWithLinks.download_links;
+        if (Array.isArray(parsed) && parsed.length > 0) ddlLinks = parsed;
+      } catch {}
+    }
+
+    if (ddlLinks.length === 0) {
+      ddlLinks = await getDownloadLinksForMovie(movieId);
+    }
     
     if (dbCached) {
       const ageInHours = (Date.now() - new Date(dbCached.lastUpdated).getTime()) / (1000 * 60 * 60);
       
       // If cache is fresh (less than 24 hours old), return it
       if (ageInHours < 24) {
-        console.log(`[PRISMA] Database cache HIT for movie ${movieId} (${ageInHours.toFixed(1)}h old)`);
+        console.log(`[PRISMA] Database cache HIT for movie ${movieId} (${ageInHours.toFixed(1)}h old) - ${ddlLinks.length} links`);
         
-        const ddlLinks = await getDownloadLinksForMovie(movieId);
         const responseData = {
           id: parseInt(movieId),
           imdb_id: dbCached.imdbId,
@@ -2322,6 +2455,7 @@ app.get('/api/movies/:id', async (req, res) => {
           yt_trailer_code: dbCached.ytTrailerCode,
           torrents: dbCached.torrents ? JSON.parse(dbCached.torrents) : [],
           download_links: ddlLinks,
+          downloadLinks: ddlLinks,
           is_tv: dbCached.mediaType === 'tv',
           type: dbCached.mediaType
         };
@@ -2339,6 +2473,34 @@ app.get('/api/movies/:id', async (req, res) => {
       } else {
         console.log(`[PRISMA] Database cache EXPIRED for movie ${movieId} (${ageInHours.toFixed(1)}h old) - refetching`);
       }
+    } else if (movieWithLinks && (ddlLinks.length > 0 || movieWithLinks.posterPath)) {
+      console.log(`[PRISMA] Movie table HIT with downloadLinks for movie ${movieId} (${ddlLinks.length} links)`);
+      const responseData = {
+        id: movieWithLinks.tmdbId || (Number.isInteger(idInt) ? idInt : movieId),
+        title: movieWithLinks.title,
+        year: movieWithLinks.releaseDate || '',
+        rating: movieWithLinks.voteAverage || 0,
+        runtime: null,
+        poster: movieWithLinks.posterPath || '',
+        backdrop: movieWithLinks.backdropPath || '',
+        plot: 'No plot available.',
+        genres: movieWithLinks.genreIds ? JSON.parse(movieWithLinks.genreIds) : [],
+        yt_trailer_code: '',
+        torrents: [],
+        download_links: ddlLinks,
+        downloadLinks: ddlLinks,
+        is_tv: false,
+        type: 'movie'
+      };
+
+      const response = {
+        success: true,
+        data: responseData,
+        source: 'Prisma Database'
+      };
+
+      setCache(cacheKey, response);
+      return res.json(response);
     } else {
       console.log(`[PRISMA] Database cache MISS for movie ${movieId} - fetching from TMDB`);
     }
@@ -2445,6 +2607,7 @@ app.get('/api/movies/:id', async (req, res) => {
       yt_trailer_code: trailerCode,
       torrents: torrents,
       download_links: ddlLinks,
+      downloadLinks: ddlLinks,
       is_tv: isTVShow,
       type: isTVShow ? 'tv' : 'movie'
     };

@@ -49,15 +49,31 @@ export async function getDownloadLinksForMovie(identifier) {
       }));
     }
 
-    // 2. Fallback to Movie.download_links JSON column
+    // 2. Fallback to Movie with related downloadLinks
     const movie = await prisma.movie.findFirst({
       where: {
         OR: [
           { id: idStr },
           ...(Number.isInteger(idNum) ? [{ tmdbId: idNum }] : [])
         ]
+      },
+      include: {
+        downloadLinks: true
       }
     });
+
+    if (movie?.downloadLinks && movie.downloadLinks.length > 0) {
+      return movie.downloadLinks.map(l => ({
+        id: l.id,
+        movieId: l.movieId,
+        tmdbId: l.tmdbId,
+        provider: l.provider,
+        quality: l.quality,
+        url: l.url,
+        size: l.size || null,
+        createdAt: l.createdAt
+      }));
+    }
 
     if (movie?.download_links) {
       const parsed = parseJsonArray(movie.download_links);
