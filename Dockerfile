@@ -92,6 +92,8 @@ COPY --from=backend-builder --chown=nodejs:nodejs /app/backend/node_modules ./ba
 # NOTE: .dockerignore keeps secrets (backend/.env) and dev databases (*.db) out of the
 #       image; runtime DATABASE_URL always points at /app/data/zenemozite.db (volume).
 COPY --chown=nodejs:nodejs backend/*.js ./backend/
+COPY --chown=nodejs:nodejs backend/cron ./backend/cron/
+COPY --chown=nodejs:nodejs backend/services ./backend/services/
 COPY --chown=nodejs:nodejs backend/storage ./backend/storage/
 COPY --chown=nodejs:nodejs backend/prisma/schema.prisma backend/prisma/client.js ./backend/prisma/
 COPY --chown=nodejs:nodejs backend/package*.json ./backend/
