@@ -185,10 +185,52 @@ export async function uploadFile(filePath, options = {}) {
 }
 
 /**
- * Step 1 of reading a file back: resolve the server-side file_path
+ * Resolves a file_path returned by the Local Telegram Bot API to an absolute
+ * file path on the local disk (mapped volume).
+ * Handles both absolute paths inside the container (/var/lib/telegram-bot-api/...)
+ * and host-relative paths (./tg-api-data/...) across environments.
+ */
+export function resolveLocalDiskPath(returnedFilePath) {
+  if (!returnedFilePath) return null;
+
+  const cleanPath = String(returnedFilePath).trim();
+  const apiDir = config.telegram.apiDataDir || '/var/lib/telegram-bot-api';
+  const botToken = config.telegram.botToken;
+
+  const candidates = [
+    // 1. Exact path as returned by Local Bot API
+    path.resolve(cleanPath),
+    // 2. Relative to configured apiDataDir (/var/lib/telegram-bot-api)
+    path.resolve(apiDir, cleanPath),
+    // 3. Inside cwd ./tg-api-data
+    path.resolve(process.cwd(), 'tg-api-data', cleanPath),
+    // 4. If path has /var/lib/telegram-bot-api prefix, map to local ./tg-api-data
+    cleanPath.startsWith('/var/lib/telegram-bot-api')
+      ? path.resolve(process.cwd(), 'tg-api-data', cleanPath.replace(/^\/var\/lib\/telegram-bot-api\/?/, ''))
+      : null,
+    // 5. In case returned path is documents/... without bot token subfolder:
+    botToken ? path.resolve(apiDir, botToken, cleanPath) : null,
+    botToken ? path.resolve(process.cwd(), 'tg-api-data', botToken, cleanPath) : null,
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      try {
+        const stat = fs.statSync(candidate);
+        if (stat.isFile()) return candidate;
+      } catch {}
+    }
+  }
+
+  // Fallback to primary candidate
+  return candidates[0] || null;
+}
+
+/**
+ * Step 1 of reading a file back: resolve the server-side file_path and file_size
  * that the Local Bot API uses to serve file content.
  */
-export async function getFilePath(fileId) {
+export async function getFileInfo(fileId) {
   const res = await axios.get(`${apiBase()}/getFile`, {
     params: { file_id: fileId },
     timeout: 15000,
@@ -196,20 +238,35 @@ export async function getFilePath(fileId) {
   if (!res.data?.ok || !res.data.result?.file_path) {
     throw new Error(`Telegram getFile failed: ${res.data?.description || 'no file_path returned'}`);
   }
-  return res.data.result.file_path;
+  return {
+    filePath: res.data.result.file_path,
+    fileSize: res.data.result.file_size || null,
+  };
+}
+
+export async function getFilePath(fileId) {
+  const info = await getFileInfo(fileId);
+  return info.filePath;
 }
 
 /**
- * Step 2 of reading a file back: open a Readable stream of the file content
- * from the Local Bot API's built-in file server.
+ * Step 2 of reading a file back: open a Readable stream of the file content.
+ * Checks the mapped local volume first to read directly from disk with fs.createReadStream,
+ * bypassing HTTP entirely. Falls back to Local Bot API HTTP stream if needed.
  * @param {string} filePath — the value returned by getFilePath()
- * @returns {import('stream').Readable}
+ * @returns {Promise<import('stream').Readable>}
  */
-export function openFileStream(filePath) {
+export async function openFileStream(filePath, options = {}) {
+  const localDiskPath = resolveLocalDiskPath(filePath);
+  if (localDiskPath && fs.existsSync(localDiskPath)) {
+    console.log(`[TELEGRAM_STORE] Direct disk stream from mapped volume: ${localDiskPath}`);
+    return fs.createReadStream(localDiskPath, options);
+  }
+
   const url = `${config.telegram.localApiUrl}/file/bot${config.telegram.botToken}/${filePath}`;
-  return axios
-    .get(url, { responseType: 'stream', timeout: 0 })
-    .then((res) => res.data);
+  console.log(`[TELEGRAM_STORE] Falling back to Local Bot API HTTP stream: ${url}`);
+  const res = await axios.get(url, { responseType: 'stream', timeout: 0 });
+  return res.data;
 }
 
 /**
@@ -217,9 +274,18 @@ export function openFileStream(filePath) {
  * For multi-chunk sequential streaming, use getFilePath + openFileStream
  * separately so all paths can be resolved in parallel before streaming starts.
  */
-export async function getChunkStream(fileId) {
+export async function getChunkStream(fileId, options = {}) {
   const filePath = await getFilePath(fileId);
-  return openFileStream(filePath);
+  return openFileStream(filePath, options);
 }
 
-export default { uploadFile, uploadFileFromDisk, uploadStream, getFilePath, openFileStream, getChunkStream };
+export default {
+  uploadFile,
+  uploadFileFromDisk,
+  uploadStream,
+  resolveLocalDiskPath,
+  getFileInfo,
+  getFilePath,
+  openFileStream,
+  getChunkStream,
+};

@@ -445,6 +445,28 @@ export async function handleStream(req, res) {
       });
     }
 
+    // C. Try resolving directly as Telegram Bot API file_id (Local Bot API / mapped volume)
+    if (config.telegram.configured) {
+      try {
+        const directMedia = await resolveTelegramMedia({ fileId: file_id, title: movieTitle });
+        if (directMedia && (directMedia.document || directMedia.localFilePath)) {
+          console.log(`[STREAM_API] Direct Telegram file_id resolved: ${file_id}`);
+          return await streamMediaToResponse({
+            req,
+            res,
+            document: directMedia.document,
+            localFilePath: directMedia.localFilePath,
+            fileSize: directMedia.fileSize,
+            mimeType: 'video/mp4',
+            fileName: movieFileName,
+            isDownload,
+          });
+        }
+      } catch (directErr) {
+        console.warn(`[STREAM_API] Direct file_id resolution failed for "${file_id}":`, directErr.message);
+      }
+    }
+
     return res.status(404).json({
       success: false,
       message: 'Media file not found in Telegram CDN and no torrent magnet provided to stream.',

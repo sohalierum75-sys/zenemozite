@@ -28,6 +28,7 @@ services:
       # service name (NOT localhost/172.17.0.1, which caused ECONNREFUSED).
       # NOTE: the backend appends /bot<token> itself, so do NOT add /bot here.
       - TELEGRAM_LOCAL_API_URL=${TELEGRAM_LOCAL_API_URL:-http://telegram-api:8081}
+      - TELEGRAM_API_DATA_DIR=${TELEGRAM_API_DATA_DIR:-/var/lib/telegram-bot-api}
       # Low-RAM tuning: 512MB chunks + 1 torrent at a time prevent OOM crashes
       - TELEGRAM_CHUNK_GB=${TELEGRAM_CHUNK_GB:-0.5}
       - CDN_MAX_CONCURRENT=${CDN_MAX_CONCURRENT:-1}
@@ -38,6 +39,8 @@ services:
       - zenemozite-data:/app/data
       # Torrent downloads land here; telegram-api reads them via file://
       - telegram-shared:/app/shared
+      # Map local Telegram API data volume for direct fs.createReadStream streaming
+      - ./tg-api-data:/var/lib/telegram-bot-api:ro
     
     networks:
       - zenemozite-network
@@ -68,16 +71,20 @@ services:
     container_name: telegram-api
     restart: unless-stopped
 
+    ports:
+      - "8081:8081"
+
     environment:
-      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
-      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID:-23271365}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH:-59a8393f1c17083798b42333d16ff224}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       # Enable --local mode (required for 2GB uploads + local file downloads)
       - TELEGRAM_LOCAL=1
       - TELEGRAM_LOG_LEVEL=warn
 
     volumes:
-      # Persist bot session + uploaded file store across restarts
-      - telegram-api-data:/var/lib/telegram-bot-api
+      # Persist bot session + uploaded file store across restarts on host volume
+      - ./tg-api-data:/var/lib/telegram-bot-api
       # Same shared volume as the backend: the Local Bot API server reads
       # torrent files from here via file:// (zero-RAM uploads, no HTTP copy)
       - telegram-shared:/app/shared:ro
@@ -85,15 +92,8 @@ services:
     networks:
       - zenemozite-network
 
-    # Port 8081 is intentionally NOT published to the host: the backend talks
-    # to it over the internal Docker network. Uncomment for debugging only:
-    # ports:
-    #   - "127.0.0.1:8081:8081"
-
 volumes:
   zenemozite-data:
-    driver: local
-  telegram-api-data:
     driver: local
   telegram-shared:
     driver: local

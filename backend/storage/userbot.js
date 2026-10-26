@@ -13,6 +13,8 @@
 // 6. Robust error catching: Client cancellations / socket closures are trapped
 //    safely so the Node process never crashes.
 // ==============================================================================
+import fs from 'fs';
+import path from 'path';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { TelegramClient, Api } from 'telegram';
@@ -20,7 +22,7 @@ import { StringSession } from 'telegram/sessions/index.js';
 import bigInt from 'big-integer';
 import axios from 'axios';
 import { config, formatBytes } from './config.js';
-import { getFilePath } from './telegramStore.js';
+import { getFilePath, getFileInfo, resolveLocalDiskPath } from './telegramStore.js';
 
 let clientInstance = null;
 let clientInitPromise = null;
@@ -168,17 +170,17 @@ export async function resolveTelegramMedia({ messageId, fileId, title } = {}) {
   if (fileId && config.telegram.configured) {
     try {
       console.log(`[USERBOT] Resolving file_id "${fileId}" via Telegram Bot API...`);
-      const filePath = await getFilePath(fileId);
-      console.log(`[USERBOT] Resolved Bot API file_path: ${filePath}`);
+      const info = await getFileInfo(fileId);
+      console.log(`[USERBOT] Resolved Bot API file_path: ${info.filePath} (${info.fileSize ? formatBytes(info.fileSize) : 'unknown size'})`);
       return {
         document: null,
-        localFilePath: filePath,
-        fileSize: null,
+        localFilePath: info.filePath,
+        fileSize: info.fileSize,
         mimeType: 'video/mp4',
         fileName: `${title || 'download'}.mp4`,
       };
     } catch (err) {
-      console.warn(`[USERBOT] Local Bot API getFilePath failed for ${fileId}:`, err.message);
+      console.warn(`[USERBOT] Local Bot API getFileInfo failed for ${fileId}:`, err.message);
     }
   }
 
@@ -315,9 +317,78 @@ export async function streamMediaToResponse({
   }
 
   // ---------------------------------------------------------------------------
-  // 2. Fallback: Local Bot API Stream with Range & Attachment support
+  // 2. Direct Disk Stream from Local Bot API mapped volume (fs.createReadStream)
   // ---------------------------------------------------------------------------
   if (localFilePath) {
+    const diskPath = resolveLocalDiskPath(localFilePath);
+    if (diskPath && fs.existsSync(diskPath)) {
+      try {
+        const stats = fs.statSync(diskPath);
+        const totalSize = stats.size || fileSize;
+        const contentType = mimeType || 'video/mp4';
+
+        console.log(`[LOCAL_DISK_STREAM] Streaming directly from mapped volume: "${diskPath}" (${formatBytes(totalSize)})`);
+
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Disposition', isDownload ? `attachment; filename="${safeFileName}"` : `inline; filename="${safeFileName}"`);
+
+        if (rangeHeader) {
+          const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+          if (match) {
+            const start = parseInt(match[1], 10);
+            const end = match[2] ? parseInt(match[2], 10) : totalSize - 1;
+
+            if (start >= totalSize || end >= totalSize) {
+              res.setHeader('Content-Range', `bytes */${totalSize}`);
+              return res.status(416).json({ success: false, message: 'Requested range not satisfiable' });
+            }
+
+            const contentLength = end - start + 1;
+            res.status(206);
+            res.setHeader('Content-Range', `bytes ${start}-${end}/${totalSize}`);
+            res.setHeader('Content-Length', contentLength);
+
+            const fileStream = fs.createReadStream(diskPath, { start, end });
+            req.once('close', () => {
+              if (!fileStream.destroyed) fileStream.destroy();
+            });
+
+            await pipeline(fileStream, res);
+            console.log(`[LOCAL_DISK_STREAM] Completed range stream: ${start}-${end}/${totalSize} for "${safeFileName}"`);
+            return;
+          }
+        }
+
+        // Full file stream (no range)
+        res.status(200);
+        res.setHeader('Content-Length', totalSize);
+
+        const fileStream = fs.createReadStream(diskPath);
+        req.once('close', () => {
+          if (!fileStream.destroyed) fileStream.destroy();
+        });
+
+        await pipeline(fileStream, res);
+        console.log(`[LOCAL_DISK_STREAM] Completed full stream for "${safeFileName}"`);
+        return;
+      } catch (err) {
+        if (err.code === 'ERR_STREAM_PREMATURE_CLOSE') {
+          console.log(`[LOCAL_DISK_STREAM] Stream cancelled by client for "${safeFileName}"`);
+          return;
+        }
+        console.error('[LOCAL_DISK_STREAM] Disk stream failed:', err.message);
+        if (!res.headersSent) {
+          return res.status(500).json({ success: false, message: err.message });
+        }
+        res.destroy();
+        return;
+      }
+    }
+
+    // ---------------------------------------------------------------------------
+    // 3. Fallback: Local Bot API HTTP Stream (when volume mount is not direct)
+    // ---------------------------------------------------------------------------
     const streamUrl = `${config.telegram.localApiUrl}/file/bot${config.telegram.botToken}/${localFilePath}`;
     const headers = {};
     if (rangeHeader) {
@@ -325,14 +396,14 @@ export async function streamMediaToResponse({
     }
 
     try {
-      console.log(`[USERBOT_STREAM] Fallback: Streaming from Local Bot API: ${streamUrl}`);
+      console.log(`[USERBOT_STREAM] Fallback: Streaming from Local Bot API HTTP: ${streamUrl}`);
       const response = await axios.get(streamUrl, {
         headers,
         responseType: 'stream',
         timeout: 0,
       });
 
-      res.setHeader('Content-Disposition', `attachment; filename="${safeFileName}"`);
+      res.setHeader('Content-Disposition', isDownload ? `attachment; filename="${safeFileName}"` : `inline; filename="${safeFileName}"`);
       res.setHeader('Content-Type', mimeType || 'video/mp4');
       if (response.headers['content-length']) {
         res.setHeader('Content-Length', response.headers['content-length']);

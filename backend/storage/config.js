@@ -13,7 +13,13 @@ export const config = {
   telegram: {
     botToken: telegramToken,
     chatId: telegramChatId,
-    localApiUrl: (process.env.TELEGRAM_LOCAL_API_URL || 'http://telegram-api:8081').replace(/\/+$/, ''),
+    localApiUrl: (
+      process.env.TELEGRAM_LOCAL_API_URL ||
+      process.env.TELEGRAM_API_URL ||
+      (process.env.NODE_ENV === 'production' ? 'http://telegram-api:8081' : 'http://localhost:8081')
+    ).replace(/\/+$/, ''),
+    // Local Bot API file storage directory (mounted via Docker volume for zero-HTTP direct disk streaming)
+    apiDataDir: (process.env.TELEGRAM_API_DATA_DIR || '/var/lib/telegram-bot-api').trim(),
     // Hard per-upload limit: the Local Bot API accepts up to 2GB
     maxSizeBytes: Number(process.env.TELEGRAM_MAX_GB || 2) * GIB,
     // Target chunk size for splitting large files (must be < maxSizeBytes).

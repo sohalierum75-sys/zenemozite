@@ -45,3 +45,4 @@ desktop.ini
 # Testing
 coverage/
 .cache/
+tg-api-data/
