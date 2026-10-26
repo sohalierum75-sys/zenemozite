@@ -70,9 +70,23 @@ const SingleMovie = () => {
       console.log('[MOVIE] Torrents:', movieData?.torrents);
 
       if (movieData && movieData.id) {
+        // Normalize downloadLinks and download_links to ensure both keys are populated arrays
+        const rawLinks = movieData.downloadLinks || movieData.download_links;
+        let linksArray = [];
+        if (Array.isArray(rawLinks)) {
+          linksArray = rawLinks;
+        } else if (typeof rawLinks === 'string') {
+          try {
+            const parsed = JSON.parse(rawLinks);
+            if (Array.isArray(parsed)) linksArray = parsed;
+          } catch {}
+        }
+        movieData.downloadLinks = linksArray;
+        movieData.download_links = linksArray;
+
         setMovie(movieData);
         setError(null);
-        console.log('[MOVIE] Successfully set movie:', movieData.title);
+        console.log('[MOVIE] Successfully set movie:', movieData.title, 'links:', linksArray.length);
       } else {
         console.error('[MOVIE] Invalid movie data:', movieData);
         setError('Movie not found');
@@ -107,8 +121,14 @@ const SingleMovie = () => {
     );
   };
 
+  const directLinks = Array.isArray(movie?.downloadLinks) && movie.downloadLinks.length > 0
+    ? movie.downloadLinks
+    : (Array.isArray(movie?.download_links) && movie.download_links.length > 0
+        ? movie.download_links
+        : []);
+
   const hasTorrents = movie?.torrents && Array.isArray(movie.torrents) && movie.torrents.length > 0;
-  const hasDirectLinks = movie?.download_links && Array.isArray(movie.download_links) && movie.download_links.length > 0;
+  const hasDirectLinks = directLinks.length > 0;
   const hasDownloadOptions = hasTorrents || hasDirectLinks;
 
   if (loading) {
@@ -440,7 +460,7 @@ const SingleMovie = () => {
                       </h4>
                     </div>
                     <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
-                      {movie.download_links.length} Link{movie.download_links.length > 1 ? 's' : ''} Available
+                      {directLinks.length} Link{directLinks.length > 1 ? 's' : ''} Available
                     </span>
                   </div>
                   <p className="text-[#8b94a6] text-sm mb-4">
@@ -450,7 +470,8 @@ const SingleMovie = () => {
                     <DownloadButton
                       movieId={movie?.id || movie?.title}
                       title={movie?.title}
-                      downloadLinks={movie.download_links}
+                      downloadLinks={directLinks}
+                      movie={movie}
                       label={isLk ? 'Download File (DDL) | සෘජු බාගත කිරීම' : 'Download File (DDL)'}
                       className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:-translate-y-0.5"
                     />
@@ -512,7 +533,8 @@ const SingleMovie = () => {
                               movieId={movie?.title}
                               title={movie?.title}
                               magnetLink={torrent.url}
-                              downloadLinks={movie?.download_links || []}
+                              downloadLinks={directLinks}
+                              movie={movie}
                               label={isLk ? 'Download | බාගත කරන්න' : 'Download'}
                               className="w-full bg-[#ff9900] text-[#0f1115] hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] hover:-translate-y-1"
                             />

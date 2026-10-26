@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { Download, ExternalLink, ChevronDown, ChevronUp, Server, HardDrive, Sparkles, X, CheckCircle2 } from 'lucide-react';
 
@@ -82,13 +82,44 @@ const DownloadButton = ({
   movieId,
   title,
   magnetLink,
-  downloadLinks = [],
+  downloadLinks,
+  download_links,
+  movie,
   label = 'Download',
   className = ''
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [lastClickedUrl, setLastClickedUrl] = useState(null);
   const dropdownRef = useRef(null);
+
+  // 1. Data Mapping: Correctly extract the links array from downloadLinks, download_links, or movie object
+  // Supports arrays, JSON strings, and both camelCase and snake_case keys
+  const linksList = useMemo(() => {
+    const raw = (Array.isArray(downloadLinks) && downloadLinks.length > 0)
+      ? downloadLinks
+      : (Array.isArray(download_links) && download_links.length > 0)
+      ? download_links
+      : (Array.isArray(movie?.downloadLinks) && movie.downloadLinks.length > 0)
+      ? movie.downloadLinks
+      : (Array.isArray(movie?.download_links) && movie.download_links.length > 0)
+      ? movie.download_links
+      : (downloadLinks || download_links || movie?.downloadLinks || movie?.download_links || []);
+
+    if (Array.isArray(raw)) {
+      return raw.filter(l => l && (l.url || l.quality));
+    }
+
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed.filter(l => l && (l.url || l.quality));
+        }
+      } catch {}
+    }
+
+    return [];
+  }, [downloadLinks, download_links, movie]);
 
   // Close dropdown on outside click or Touch
   useEffect(() => {
@@ -145,7 +176,8 @@ const DownloadButton = ({
     window.open(buildWebtorUrl(), '_blank', 'noopener,noreferrer');
   };
 
-  const hasDirectLinks = Array.isArray(downloadLinks) && downloadLinks.length > 0;
+  // 2. Conditional Rendering: Check if array exists and has items
+  const hasDirectLinks = Boolean(linksList && linksList.length > 0);
   const hasTorrent = Boolean(magnetLink);
 
   return (
@@ -160,13 +192,13 @@ const DownloadButton = ({
         disabled={!hasDirectLinks && !hasTorrent}
         aria-haspopup="true"
         aria-expanded={isOpen}
-        className={`inline-flex items-center justify-center space-x-2 font-bold py-3 px-6 rounded-xl transition-all duration-300 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-md ${className}`}
+        className={`inline-flex items-center justify-center space-x-2 font-bold py-3 px-6 rounded-xl transition-all duration-300 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-md cursor-pointer ${className}`}
       >
         <Download className="w-5 h-5 transition-transform duration-300 group-hover:translate-y-0.5" />
         <span>{label}</span>
         {hasDirectLinks && (
           <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-black/30 font-semibold">
-            {downloadLinks.length}
+            {linksList.length}
           </span>
         )}
         {isOpen ? (
@@ -192,29 +224,32 @@ const DownloadButton = ({
             </div>
             <button
               onClick={() => setIsOpen(false)}
-              className="text-[#8b94a6] hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors"
+              className="text-[#8b94a6] hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
               title="Close menu"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Direct Download Links list */}
+          {/* 3. Map the Array: Render buttons by mapping over this array inside dropdown UI */}
           {hasDirectLinks ? (
             <div className="space-y-2 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
-              <div className="text-[11px] font-semibold text-[#8b94a6] px-2 uppercase tracking-wider">
-                Direct Cloud Links (DDL)
+              <div className="text-[11px] font-semibold text-[#8b94a6] px-2 uppercase tracking-wider flex items-center justify-between">
+                <span>Direct Cloud Links (DDL)</span>
+                <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                  {linksList.length} available
+                </span>
               </div>
-              {downloadLinks.map((link, idx) => {
+              {linksList.map((link, idx) => {
                 const style = getProviderStyle(link.provider);
                 const qualityBadge = getQualityBadge(link.quality);
                 const isSelected = lastClickedUrl === link.url;
 
                 return (
                   <button
-                    key={link.id || `ddl-${idx}`}
+                    key={link.id || `ddl-${idx}-${link.url || link.quality}`}
                     onClick={() => handleLinkClick(link.url)}
-                    className={`w-full text-left p-3 rounded-xl border transition-all duration-200 flex items-center justify-between group active:scale-[0.98] ${style.bg} ${style.border}`}
+                    className={`w-full text-left p-3 rounded-xl border transition-all duration-200 flex items-center justify-between group active:scale-[0.98] cursor-pointer ${style.bg} ${style.border}`}
                   >
                     <div className="flex items-center space-x-3 overflow-hidden">
                       <div className={`p-2 rounded-lg bg-black/40 ${style.text}`}>
