@@ -2375,13 +2375,22 @@ app.get('/api/movies/:id', async (req, res) => {
   const memCached = getFromCache(cacheKey);
   if (memCached && memCached.data) {
     console.log(`[CACHE] Memory cache HIT for movie ${movieId}`);
-    const ddlLinks = await getDownloadLinksForMovie(movieId);
+    let ddlLinks = await getDownloadLinksForMovie(movieId);
+    if (ddlLinks.length === 0 && memCached.data.title) {
+      ddlLinks = await getDownloadLinksForMovie(memCached.data.title);
+    }
+    const finalLinks = ddlLinks.length > 0 
+      ? ddlLinks 
+      : (Array.isArray(memCached.data.download_links) && memCached.data.download_links.length > 0 
+          ? memCached.data.download_links 
+          : (Array.isArray(memCached.data.downloadLinks) ? memCached.data.downloadLinks : []));
+
     return res.json({
       ...memCached,
       data: {
         ...memCached.data,
-        download_links: ddlLinks.length > 0 ? ddlLinks : (memCached.data.download_links || []),
-        downloadLinks: ddlLinks.length > 0 ? ddlLinks : (memCached.data.downloadLinks || [])
+        download_links: finalLinks,
+        downloadLinks: finalLinks
       }
     });
   }
@@ -2432,6 +2441,17 @@ app.get('/api/movies/:id', async (req, res) => {
 
     if (ddlLinks.length === 0) {
       ddlLinks = await getDownloadLinksForMovie(movieId);
+    }
+    if (ddlLinks.length === 0 && dbCached?.title) {
+      ddlLinks = await getDownloadLinksForMovie(dbCached.title);
+    }
+    if (ddlLinks.length === 0 && dbCached?.download_links) {
+      try {
+        const parsed = typeof dbCached.download_links === 'string'
+          ? JSON.parse(dbCached.download_links)
+          : dbCached.download_links;
+        if (Array.isArray(parsed) && parsed.length > 0) ddlLinks = parsed;
+      } catch {}
     }
     
     if (dbCached) {
@@ -2591,8 +2611,107 @@ app.get('/api/movies/:id', async (req, res) => {
       torrents = [];
     }
 
-    // Build response data with direct download links
-    const ddlLinks = await getDownloadLinksForMovie(movieId);
+    // STEP 3.1: Query Prisma Movie table for this specific movieId (and tmdbId / title)
+    // to explicitly merge any direct download links into the fresh response object
+    let ddlLinks = [];
+    const movieIdInt = parseInt(movieId, 10);
+    const tmdbIdNum = Number.isInteger(movieData?.id) 
+      ? movieData.id 
+      : (Number.isInteger(movieIdInt) ? movieIdInt : null);
+
+    try {
+      const dbMovie = await prisma.movie.findFirst({
+        where: {
+          OR: [
+            { id: String(movieId) },
+            ...(Number.isInteger(movieIdInt) ? [{ tmdbId: movieIdInt }] : []),
+            ...(tmdbIdNum && tmdbIdNum !== movieIdInt ? [{ tmdbId: tmdbIdNum }] : []),
+            ...(title ? [{ title: title }] : []),
+            ...(movieData?.title && movieData.title !== title ? [{ title: movieData.title }] : []),
+            ...(movieData?.original_title && movieData.original_title !== title ? [{ title: movieData.original_title }] : [])
+          ]
+        },
+        include: {
+          downloadLinks: true
+        }
+      });
+
+      if (dbMovie) {
+        console.log(`[PRISMA] Fresh Fetch found matching Movie in DB (ID: ${dbMovie.id}, Title: "${dbMovie.title}")`);
+        
+        // 1. Extract from related downloadLinks table
+        if (dbMovie.downloadLinks && Array.isArray(dbMovie.downloadLinks) && dbMovie.downloadLinks.length > 0) {
+          ddlLinks = dbMovie.downloadLinks.map(l => ({
+            id: l.id,
+            movieId: l.movieId,
+            tmdbId: l.tmdbId,
+            provider: l.provider,
+            quality: l.quality,
+            url: l.url,
+            size: l.size || null,
+            createdAt: l.createdAt
+          }));
+        } 
+        
+        // 2. Fallback to download_links JSON array on Movie record
+        if (ddlLinks.length === 0 && dbMovie.download_links) {
+          try {
+            const parsed = typeof dbMovie.download_links === 'string'
+              ? JSON.parse(dbMovie.download_links)
+              : dbMovie.download_links;
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              ddlLinks = parsed;
+            }
+          } catch (e) {
+            console.warn('[PRISMA] Error parsing dbMovie.download_links JSON:', e.message);
+          }
+        }
+      }
+    } catch (dbErr) {
+      console.warn(`[PRISMA] Error querying Movie table for movieId ${movieId}:`, dbErr.message);
+    }
+
+    // STEP 3.2: If still empty, check DownloadLink table directly by movieId or tmdbId
+    if (ddlLinks.length === 0) {
+      try {
+        const directLinks = await prisma.downloadLink.findMany({
+          where: {
+            OR: [
+              { movieId: String(movieId) },
+              { tmdbId: String(movieId) },
+              ...(tmdbIdNum ? [{ tmdbId: String(tmdbIdNum) }] : [])
+            ]
+          },
+          orderBy: { createdAt: 'asc' }
+        });
+
+        if (directLinks && directLinks.length > 0) {
+          ddlLinks = directLinks.map(l => ({
+            id: l.id,
+            movieId: l.movieId,
+            tmdbId: l.tmdbId,
+            provider: l.provider,
+            quality: l.quality,
+            url: l.url,
+            size: l.size || null,
+            createdAt: l.createdAt
+          }));
+        }
+      } catch (err) {
+        console.warn(`[PRISMA] Error querying DownloadLink table directly:`, err.message);
+      }
+    }
+
+    // STEP 3.3: Final fallback to getDownloadLinksForMovie helper by movieId and title
+    if (ddlLinks.length === 0) {
+      ddlLinks = await getDownloadLinksForMovie(movieId);
+      if (ddlLinks.length === 0 && title) {
+        ddlLinks = await getDownloadLinksForMovie(title);
+      }
+    }
+
+    console.log(`[API] DDL Links merged for Fresh Fetch movie ${movieId}: ${ddlLinks.length} link(s) found`);
+
     const responseData = {
       id: parseInt(movieId),
       imdb_id: imdbId,
@@ -2634,6 +2753,7 @@ app.get('/api/movies/:id', async (req, res) => {
           genres: JSON.stringify(responseData.genres),
           ytTrailerCode: trailerCode || null,
           torrents: JSON.stringify(torrents),
+          download_links: ddlLinks.length > 0 ? JSON.stringify(ddlLinks) : undefined,
           lastUpdated: new Date()
         },
         create: {
@@ -2649,7 +2769,8 @@ app.get('/api/movies/:id', async (req, res) => {
           plot: responseData.plot || null,
           genres: JSON.stringify(responseData.genres),
           ytTrailerCode: trailerCode || null,
-          torrents: JSON.stringify(torrents)
+          torrents: JSON.stringify(torrents),
+          download_links: ddlLinks.length > 0 ? JSON.stringify(ddlLinks) : null
         }
       });
       
