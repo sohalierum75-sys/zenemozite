@@ -5,6 +5,7 @@ import prisma from '../prisma/client.js';
 import { config } from '../storage/config.js';
 import { getFileInfo, resolveLocalDiskPath } from '../storage/telegramStore.js';
 import { parseTelegramFiles } from '../storage/telegramParser.js';
+import { forwardMediaToTargetChannel } from '../storage/userbot.js';
 import {
   extractMetadataFromText,
   verifyResolutionWithFFprobe,
@@ -280,7 +281,39 @@ export async function processIncomingTelegramPost(message, updateId = null) {
   }
 
   try {
-    // 5. Read File Metadata & Detect Resolution
+    // 5. Zero-Download Media Cloud Forwarding:
+    // If post originates from an external source channel, forward/copy media directly to our target channel
+    // on Telegram's cloud datacenter. NEVER download the media file to VPS disk or RAM.
+    let effectiveMessageId = messageId;
+    let effectiveFileId = fileId;
+    let forwardDoc = null;
+
+    const targetChatId = config.telegram.chatId;
+    const targetCleanId = targetChatId ? String(targetChatId).replace(/^-100/, '') : '';
+    const sourceCleanId = channelId.replace(/^-100/, '');
+
+    if (targetCleanId && sourceCleanId !== targetCleanId) {
+      console.log(`[TELEGRAM_IMPORT] Zero-Download: Cloud-forwarding media msg #${messageId} from channel ${channelId} to target channel ${targetChatId}...`);
+      try {
+        const fwdResult = await forwardMediaToTargetChannel({
+          sourceChannelId: channelId,
+          messageId,
+        });
+
+        if (fwdResult?.success) {
+          console.log(`[TELEGRAM_IMPORT] Cloud-forward successful. Target msg #${fwdResult.targetMessageId}`);
+          if (fwdResult.targetMessageId) effectiveMessageId = fwdResult.targetMessageId;
+          if (fwdResult.targetFileId) effectiveFileId = fwdResult.targetFileId;
+          if (fwdResult.document) forwardDoc = fwdResult.document;
+        } else {
+          console.warn(`[TELEGRAM_IMPORT] Cloud forward notice: ${fwdResult?.reason || 'Using source message/file directly'}`);
+        }
+      } catch (fwdErr) {
+        console.warn(`[TELEGRAM_IMPORT] Forward error:`, fwdErr.message);
+      }
+    }
+
+    // 6. In-Memory Metadata Extraction (Zero-Disk, Zero-RAM buffering, Zero-FFprobe)
     const parsedMeta = extractMetadataFromText(rawFileName, caption, fileSize);
     console.log(`[TELEGRAM_IMPORT] Parsed: Title="${parsedMeta.title}" Year=${parsedMeta.year} Quality=${parsedMeta.quality} Codec=${parsedMeta.codec || 'N/A'}`);
 
@@ -290,25 +323,32 @@ export async function processIncomingTelegramPost(message, updateId = null) {
     let streamHeight = null;
     let detectedCodec = parsedMeta.codec;
 
-    // 6. FFprobe Resolution Verification (if Local Bot API storage path is accessible)
-    try {
-      const fileInfo = await getFileInfo(fileId).catch(() => null);
-      if (fileInfo?.filePath) {
-        const localPath = resolveLocalDiskPath(fileInfo.filePath);
-        if (localPath && fs.existsSync(localPath)) {
-          const probe = await verifyResolutionWithFFprobe(localPath);
-          if (probe.verified && probe.quality) {
-            console.log(`[TELEGRAM_IMPORT] FFprobe VERIFIED resolution: ${probe.width}x${probe.height} -> ${probe.quality} (${probe.codec})`);
-            detectedQuality = probe.quality;
-            verifiedResolution = true;
-            streamWidth = probe.width;
-            streamHeight = probe.height;
-            if (probe.codec) detectedCodec = probe.codec;
-          }
-        }
+    // Check message.video metadata directly from Telegram JSON
+    if (message.video && message.video.width && message.video.height) {
+      streamWidth = message.video.width;
+      streamHeight = message.video.height;
+      verifiedResolution = true;
+      if (streamHeight >= 2160 || streamWidth >= 3840) detectedQuality = '4K';
+      else if (streamHeight >= 1080 || streamWidth >= 1920) detectedQuality = '1080p';
+      else if (streamHeight >= 720 || streamWidth >= 1280) detectedQuality = '720p';
+      else if (streamHeight >= 480 || streamWidth >= 640) detectedQuality = '480p';
+      console.log(`[TELEGRAM_IMPORT] Detected in-memory resolution from video metadata: ${streamWidth}x${streamHeight} -> ${detectedQuality}`);
+    }
+
+    // Check MTProto Document attributes if present
+    const docAttributes = forwardDoc?.attributes || doc?.attributes;
+    if (!verifiedResolution && Array.isArray(docAttributes)) {
+      const vAttr = docAttributes.find((a) => a.w || a.h || a.className === 'DocumentAttributeVideo');
+      if (vAttr && (vAttr.w || vAttr.h)) {
+        streamWidth = vAttr.w || null;
+        streamHeight = vAttr.h || null;
+        verifiedResolution = true;
+        if (streamHeight >= 2160 || streamWidth >= 3840) detectedQuality = '4K';
+        else if (streamHeight >= 1080 || streamWidth >= 1920) detectedQuality = '1080p';
+        else if (streamHeight >= 720 || streamWidth >= 1280) detectedQuality = '720p';
+        else if (streamHeight >= 480 || streamWidth >= 640) detectedQuality = '480p';
+        console.log(`[TELEGRAM_IMPORT] Detected in-memory resolution from MTProto attributes: ${streamWidth}x${streamHeight} -> ${detectedQuality}`);
       }
-    } catch (probeErr) {
-      console.warn('[TELEGRAM_IMPORT] Probe check notice:', probeErr.message);
     }
 
     // 7. TMDB Metadata Lookup
@@ -325,7 +365,7 @@ export async function processIncomingTelegramPost(message, updateId = null) {
     const releaseDate = tmdbMeta?.releaseDate || (parsedMeta.year ? String(parsedMeta.year) : null);
     const normalizedMovieTitle = normalizeTitle(movieTitle);
 
-    // 9. Create or Update Movie Record
+    // 9. Create or Update Movie Record (Text-only database storage)
     if (!movie) {
       console.log(`[TELEGRAM_IMPORT] Creating new Movie record for "${movieTitle}"...`);
       movie = await prisma.movie.create({
@@ -361,22 +401,8 @@ export async function processIncomingTelegramPost(message, updateId = null) {
       });
     }
 
-    // 8. Verify file can be served by Telegram Local Bot API before marking available
-    let canBeServed = false;
-    try {
-      const fileInfo = await getFileInfo(fileId).catch(() => null);
-      if (fileInfo && fileInfo.filePath) {
-        canBeServed = true;
-      }
-    } catch {
-      canBeServed = false;
-    }
-
-    if (!canBeServed) {
-      console.warn(`[TELEGRAM_IMPORT] File ${fileId} cannot be served by Telegram Local Bot API. Marking variant unavailable.`);
-    }
-
-    // 10. Attach / Upsert Multi-Quality Download Variant
+    // 10. Attach / Upsert Multi-Quality Download Variant (Text-Only Database)
+    // Files hosted in Telegram Cloud CDN are directly streamable via file_id or message_id
     const variant = await prisma.movieFileVariant.upsert({
       where: {
         movieId_quality: {
@@ -385,9 +411,9 @@ export async function processIncomingTelegramPost(message, updateId = null) {
         },
       },
       update: {
-        telegramFileId: fileId,
+        telegramFileId: effectiveFileId,
         telegramFileUniqueId: fileUniqueId,
-        telegramMessageId: messageId,
+        telegramMessageId: effectiveMessageId,
         sourceChannelId: channelId,
         fileName: rawFileName,
         fileSizeBytes: fileSize,
@@ -399,14 +425,14 @@ export async function processIncomingTelegramPost(message, updateId = null) {
         audioLanguage: parsedMeta.audioLanguage,
         subtitleInfo: parsedMeta.subtitleInfo,
         verifiedResolution,
-        isAvailable: canBeServed,
+        isAvailable: true,
       },
       create: {
         movieId: movie.id,
         quality: detectedQuality,
-        telegramFileId: fileId,
+        telegramFileId: effectiveFileId,
         telegramFileUniqueId: fileUniqueId,
-        telegramMessageId: messageId,
+        telegramMessageId: effectiveMessageId,
         sourceChannelId: channelId,
         fileName: rawFileName,
         fileSizeBytes: fileSize,
@@ -418,7 +444,7 @@ export async function processIncomingTelegramPost(message, updateId = null) {
         audioLanguage: parsedMeta.audioLanguage,
         subtitleInfo: parsedMeta.subtitleInfo,
         verifiedResolution,
-        isAvailable: canBeServed,
+        isAvailable: true,
       },
     });
 
@@ -434,6 +460,7 @@ export async function processIncomingTelegramPost(message, updateId = null) {
     const tgFilesArray = allVariants
       .map((v) => ({
         file_id: v.telegramFileId,
+        message_id: v.telegramMessageId,
         quality: v.quality,
         size: v.fileSizeFormatted || formatBytes(v.fileSizeBytes) || 'Unknown',
         fileName: v.fileName,

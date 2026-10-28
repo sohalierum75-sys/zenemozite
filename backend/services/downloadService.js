@@ -5,6 +5,7 @@ import axios from 'axios';
 import prisma from '../prisma/client.js';
 import { config, formatBytes } from '../storage/config.js';
 import { getFileInfo, resolveLocalDiskPath, openFileStream } from '../storage/telegramStore.js';
+import { resolveTelegramMedia, streamMediaToResponse } from '../storage/userbot.js';
 
 // Signing secret for generating secure HMAC tokens
 export const SIGNING_SECRET = (
@@ -209,13 +210,40 @@ export async function handleDirectStreaming({ req, res, targetId, requestedQuali
 
     // 3. Resolve Telegram file details
     const telegramFileId = variant?.telegramFileId || targetId;
+    const telegramMessageId = variant?.telegramMessageId;
     const movieTitle = movie?.title || 'movie';
     const qualityLabel = variant?.quality || requestedQuality || '1080p';
     const outFileName = sanitizeFileName(`${movieTitle} [${qualityLabel}].mp4`);
 
-    console.log(`[DOWNLOAD_STREAM] Request from ${clientIp} for "${movieTitle}" (${qualityLabel}) - fileId: ${telegramFileId}`);
+    console.log(`[DOWNLOAD_STREAM] Request from ${clientIp} for "${movieTitle}" (${qualityLabel}) - fileId: ${telegramFileId}, msgId: ${telegramMessageId || 'N/A'}`);
 
-    // Resolve file info via Local Bot API
+    // Option A: Try Direct Telegram MTProto Streaming Engine (Zero-Disk, Zero-RAM, Cloud direct)
+    if (telegramMessageId || (telegramFileId && config.telegram.stringSession)) {
+      try {
+        const media = await resolveTelegramMedia({
+          messageId: telegramMessageId,
+          fileId: telegramFileId,
+          title: movieTitle,
+        });
+
+        if (media && (media.document || media.localFilePath)) {
+          console.log(`[DOWNLOAD_STREAM] Direct MTProto stream resolved for "${movieTitle}"`);
+          return await streamMediaToResponse({
+            req,
+            res,
+            document: media.document,
+            localFilePath: media.localFilePath,
+            fileSize: variant?.fileSizeBytes || media.fileSize,
+            mimeType: 'application/octet-stream',
+            fileName: outFileName,
+          });
+        }
+      } catch (mtprotoErr) {
+        console.warn(`[DOWNLOAD_STREAM] MTProto stream notice: ${mtprotoErr.message}. Falling back to Local Bot API...`);
+      }
+    }
+
+    // Option B: Resolve file info via Local Bot API
     const fileInfo = await getFileInfo(telegramFileId).catch((err) => {
       console.warn(`[DOWNLOAD_STREAM] getFileInfo failed for ${telegramFileId}:`, err.message);
       return null;
@@ -278,6 +306,23 @@ export async function handleDirectStreaming({ req, res, targetId, requestedQuali
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'public, max-age=3600');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Content-Disposition, Accept-Ranges');
+
+    // Zero-Storage cleanup hook: purge cached file from local disk volume immediately after stream ends
+    const cleanupDisk = () => {
+      setTimeout(() => {
+        try {
+          if (localDiskPath && fs.existsSync(localDiskPath)) {
+            fs.unlinkSync(localDiskPath);
+            console.log(`[ZERO_STORAGE] Purged cached file from local disk: "${localDiskPath}"`);
+          }
+        } catch (e) {
+          // ignore
+        }
+      }, 1500);
+    };
+
+    res.once('finish', cleanupDisk);
+    req.once('close', cleanupDisk);
 
     // 6. Stream Data with Zero-RAM overhead
     let dataStream = null;

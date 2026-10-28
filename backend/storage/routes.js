@@ -182,6 +182,44 @@ export async function handleDownload(req, res) {
       });
     }
 
+    // 2.5 Check if file_id is a MovieFileVariant record
+    const variantRecord = await prisma.movieFileVariant.findFirst({
+      where: {
+        OR: [
+          { id: file_id },
+          { telegramFileId: file_id },
+        ],
+      },
+      include: { movie: true },
+    }).catch(() => null);
+
+    if (variantRecord) {
+      const movie = variantRecord.movie;
+      const outFileName = `${movie?.title || 'movie'} [${variantRecord.quality || '1080p'}].mp4`.replace(/[^\w.\- ]/g, '_');
+      let directMedia = null;
+      try {
+        directMedia = await resolveTelegramMedia({
+          messageId: variantRecord.telegramMessageId,
+          fileId: variantRecord.telegramFileId,
+          title: movie?.title,
+        });
+      } catch (vErr) {
+        console.warn(`[PASS_THROUGH_DOWNLOAD] Error resolving variant ${file_id}:`, vErr.message);
+      }
+
+      if (directMedia && (directMedia.document || directMedia.localFilePath)) {
+        return await streamMediaToResponse({
+          req,
+          res,
+          document: directMedia.document,
+          localFilePath: directMedia.localFilePath,
+          fileSize: variantRecord.fileSizeBytes || directMedia.fileSize,
+          mimeType: 'application/octet-stream',
+          fileName: outFileName,
+        });
+      }
+    }
+
     // 3. Direct Telegram Bot API file_id (Pass-through stream from Local Bot API)
     if (config.telegram.configured && (file_id.length > 20 || file_id.startsWith('BAA') || file_id.startsWith('BQAC'))) {
       try {

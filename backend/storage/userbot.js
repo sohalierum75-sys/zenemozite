@@ -565,3 +565,95 @@ export async function streamMediaToResponse({
   }
   res.end();
 }
+
+/**
+ * Zero-Download Media Forwarding
+ * Uses Telegram's cloud servers to forward or copy media directly from a source channel
+ * to our target Telegram channel.
+ *
+ * NEVER downloads media files to VPS disk or RAM.
+ *
+ * @param {object} params
+ * @param {string|number} params.sourceChannelId
+ * @param {number} params.messageId
+ * @returns {Promise<{ success: boolean, targetMessageId?: number, targetFileId?: string, document?: any, reason?: string }>}
+ */
+export async function forwardMediaToTargetChannel({ sourceChannelId, messageId }) {
+  const targetChatId = config.telegram.chatId;
+  if (!targetChatId) {
+    return { success: false, reason: 'TELEGRAM_CHAT_ID is not configured' };
+  }
+
+  // 1. Try GramJS Userbot client first (if stringSession is available)
+  try {
+    const client = await getUserbotClient();
+    if (client && config.telegram.stringSession) {
+      console.log(`[USERBOT_FORWARD] Cloud-forwarding msg #${messageId} from ${sourceChannelId} to ${targetChatId}...`);
+      const result = await client.forwardMessages(targetChatId, {
+        messages: [Number(messageId)],
+        fromPeer: sourceChannelId,
+      });
+
+      const forwardedMsg = Array.isArray(result) ? result[0] : result;
+      if (forwardedMsg?.id) {
+        const doc = forwardedMsg.media?.document || forwardedMsg.media;
+        const fileId = doc?.id ? String(doc.id) : String(forwardedMsg.id);
+        console.log(`[USERBOT_FORWARD] Successfully forwarded via MTProto. Target msg #${forwardedMsg.id}`);
+        return {
+          success: true,
+          targetMessageId: forwardedMsg.id,
+          targetFileId: fileId,
+          document: doc,
+        };
+      }
+    }
+  } catch (mtprotoErr) {
+    console.warn(`[USERBOT_FORWARD] MTProto forwardMessages notice: ${mtprotoErr.message}. Falling back to Bot API...`);
+  }
+
+  // 2. Cloud forward via Telegram Bot API (cloud-to-cloud execution, zero VPS storage)
+  const apiBaseUrl = `${config.telegram.localApiUrl}/bot${config.telegram.botToken}`;
+  try {
+    console.log(`[BOT_FORWARD] Cloud-forwarding msg #${messageId} from ${sourceChannelId} to ${targetChatId}...`);
+    const fwdRes = await axios.post(`${apiBaseUrl}/forwardMessage`, {
+      chat_id: targetChatId,
+      from_chat_id: sourceChannelId,
+      message_id: Number(messageId),
+    }, { timeout: 15000 });
+
+    if (fwdRes.data?.ok && fwdRes.data.result) {
+      const msg = fwdRes.data.result;
+      const doc = msg.document || msg.video || msg.audio;
+      console.log(`[BOT_FORWARD] Successfully forwarded via Bot API. Target msg #${msg.message_id}, fileId: ${doc?.file_id || 'N/A'}`);
+      return {
+        success: true,
+        targetMessageId: msg.message_id,
+        targetFileId: doc?.file_id || null,
+        document: doc,
+      };
+    }
+  } catch (fwdErr) {
+    console.warn(`[BOT_FORWARD] forwardMessage notice: ${fwdErr.message}. Falling back to copyMessage...`);
+    try {
+      const res = await axios.post(`${apiBaseUrl}/copyMessage`, {
+        chat_id: targetChatId,
+        from_chat_id: sourceChannelId,
+        message_id: Number(messageId),
+      }, { timeout: 15000 });
+
+      if (res.data?.ok && res.data.result?.message_id) {
+        console.log(`[BOT_COPY] Successfully copied via Bot API. Target msg #${res.data.result.message_id}`);
+        return {
+          success: true,
+          targetMessageId: res.data.result.message_id,
+          targetFileId: null,
+        };
+      }
+    } catch (copyErr) {
+      console.warn(`[BOT_COPY] copyMessage notice: ${copyErr.message}`);
+    }
+  }
+
+  return { success: false, reason: 'Cloud forward could not be completed' };
+}
+
