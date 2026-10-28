@@ -10,6 +10,7 @@ import adminRouter, { getDownloadLinksForMovie } from './adminRoutes.js';
 import { parseTelegramFiles } from './storage/telegramParser.js';
 import { startMovieCron } from './cron/movieSync.js';
 import telegramWebhookRouter from './routes/telegramWebhookRoutes.js';
+import { seedDefaultTelegramSource } from './services/telegramImportService.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -2381,28 +2382,119 @@ app.get('/api/tv', async (req, res) => {
   }
 });
 
+const QUALITY_ORDER = { '4K': 4, '2160p': 4, '1080p': 3, '720p': 2, '480p': 1 };
+
 /**
- * Helper to fetch and parse telegram files for a movie (from Movie or MediaCache)
+ * Enhanced helper to fetch telegram files & sync status for a movie
  */
-async function getTelegramFilesForMovie(movieId, title) {
+async function getTelegramDetailsForMovie(movieId, title) {
   try {
     const idInt = parseInt(movieId, 10);
+    const normTitle = title ? String(title).toLowerCase().replace(/[^a-z0-9]/g, '') : null;
+
+    // 1. Check Movie table with variants
     const movie = await prisma.movie.findFirst({
       where: {
         OR: [
           { id: String(movieId) },
           ...(Number.isInteger(idInt) ? [{ tmdbId: idInt }] : []),
-          ...(title ? [{ title: String(title) }] : [])
+          ...(title ? [{ title: String(title) }] : []),
+          ...(normTitle ? [{ normalizedTitle: normTitle }] : [])
         ]
       },
-      include: { chunks: true }
+      include: {
+        chunks: true,
+        variants: {
+          where: { isAvailable: true }
+        }
+      }
     });
 
-    if (movie?.telegram_files) {
-      const parsed = parseTelegramFiles(movie.telegram_files);
-      if (parsed.length > 0) return parsed;
+    // 1.1 Direct MovieFileVariant records (primary source of truth)
+    if (movie?.variants && movie.variants.length > 0) {
+      const sorted = [...movie.variants].sort(
+        (a, b) => (QUALITY_ORDER[b.quality] || 0) - (QUALITY_ORDER[a.quality] || 0)
+      );
+      const mapped = sorted.map(v => ({
+        id: v.id,
+        file_id: v.telegramFileId,
+        telegramFileId: v.telegramFileId,
+        quality: v.quality,
+        size: v.fileSizeFormatted || (v.fileSizeBytes ? `${(v.fileSizeBytes / (1024 ** 3)).toFixed(1)} GB` : 'Direct Stream'),
+        fileName: v.fileName,
+        fileSizeBytes: v.fileSizeBytes,
+        width: v.width,
+        height: v.height,
+        codec: v.codec,
+        audioLanguage: v.audioLanguage,
+        subtitleInfo: v.subtitleInfo,
+        verified: Boolean(v.verifiedResolution),
+        verifiedResolution: Boolean(v.verifiedResolution),
+        isAvailable: true
+      }));
+
+      return {
+        files: mapped,
+        sync: {
+          status: 'ready',
+          variantsCount: mapped.length,
+          lastChecked: new Date().toISOString()
+        }
+      };
     }
 
+    // 1.2 Also check MovieFileVariant table directly by movieId in case movie ID was passed
+    const directVariants = await prisma.movieFileVariant.findMany({
+      where: {
+        movieId: String(movieId),
+        isAvailable: true
+      }
+    });
+
+    if (directVariants && directVariants.length > 0) {
+      const sorted = [...directVariants].sort(
+        (a, b) => (QUALITY_ORDER[b.quality] || 0) - (QUALITY_ORDER[a.quality] || 0)
+      );
+      const mapped = sorted.map(v => ({
+        id: v.id,
+        file_id: v.telegramFileId,
+        telegramFileId: v.telegramFileId,
+        quality: v.quality,
+        size: v.fileSizeFormatted || (v.fileSizeBytes ? `${(v.fileSizeBytes / (1024 ** 3)).toFixed(1)} GB` : 'Direct Stream'),
+        fileName: v.fileName,
+        fileSizeBytes: v.fileSizeBytes,
+        width: v.width,
+        height: v.height,
+        codec: v.codec,
+        audioLanguage: v.audioLanguage,
+        subtitleInfo: v.subtitleInfo,
+        verified: Boolean(v.verifiedResolution),
+        verifiedResolution: Boolean(v.verifiedResolution),
+        isAvailable: true
+      }));
+
+      return {
+        files: mapped,
+        sync: {
+          status: 'ready',
+          variantsCount: mapped.length,
+          lastChecked: new Date().toISOString()
+        }
+      };
+    }
+
+    // 2. Check Movie.telegram_files JSON column
+    if (movie?.telegram_files) {
+      const parsed = parseTelegramFiles(movie.telegram_files);
+      if (parsed.length > 0) {
+        return {
+          files: parsed,
+          sync: { status: 'ready', variantsCount: parsed.length, lastChecked: new Date().toISOString() }
+        };
+      }
+    }
+
+    // 3. Check MediaCache table
     const cached = await prisma.mediaCache.findFirst({
       where: {
         OR: [
@@ -2414,43 +2506,88 @@ async function getTelegramFilesForMovie(movieId, title) {
 
     if (cached?.telegram_files) {
       const parsed = parseTelegramFiles(cached.telegram_files);
-      if (parsed.length > 0) return parsed;
-    }
-
-    // Fallback if chunks exist but telegram_files hasn't been generated
-    if (movie?.chunks && movie.chunks.length > 0) {
-      return movie.chunks.map((c, i) => ({
-        file_id: c.telegramFileId || c.id,
-        quality: movie.fileName?.includes('720p') ? '720p' : (movie.fileName?.includes('480p') ? '480p' : '1080p'),
-        size: c.chunkSize ? `${(c.chunkSize / (1024 * 1024 * 1024)).toFixed(1)}GB` : 'Unknown'
-      }));
-    }
-
-    // Try userbot if connected
-    if (title) {
-      try {
-        const { fetchTelegramFilesForMovie } = await import('./storage/userbot.js');
-        const userbotFiles = await fetchTelegramFilesForMovie(title);
-        if (Array.isArray(userbotFiles) && userbotFiles.length > 0) {
-          if (movie?.id) {
-            prisma.movie.update({
-              where: { id: movie.id },
-              data: { telegram_files: JSON.stringify(userbotFiles) }
-            }).catch(() => {});
-          }
-          return userbotFiles;
-        }
-      } catch {
-        // userbot optional
+      if (parsed.length > 0) {
+        return {
+          files: parsed,
+          sync: { status: 'ready', variantsCount: parsed.length, lastChecked: new Date().toISOString() }
+        };
       }
     }
 
-    return [];
+    // 4. Fallback if chunks exist
+    if (movie?.chunks && movie.chunks.length > 0) {
+      const mapped = movie.chunks.map((c) => ({
+        file_id: c.telegramFileId || c.id,
+        quality: movie.fileName?.includes('720p') ? '720p' : (movie.fileName?.includes('480p') ? '480p' : '1080p'),
+        size: c.chunkSize ? `${(c.chunkSize / (1024 * 1024 * 1024)).toFixed(1)}GB` : 'Unknown',
+        verified: false,
+        isAvailable: true
+      }));
+      return {
+        files: mapped,
+        sync: { status: 'ready', variantsCount: mapped.length, lastChecked: new Date().toISOString() }
+      };
+    }
+
+    // 5. Check if an import is actively syncing or recently failed
+    const recentImport = await prisma.telegramImport.findFirst({
+      where: {
+        OR: [
+          ...(movie?.id ? [{ movieId: movie.id }] : []),
+          ...(title ? [{ parsedTitle: { contains: String(title).slice(0, 20) } }] : [])
+        ]
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    if (recentImport) {
+      if (recentImport.status === 'processing' || recentImport.status === 'pending') {
+        return {
+          files: [],
+          sync: {
+            status: 'syncing',
+            message: 'Telegram import in progress...',
+            importId: recentImport.id,
+            lastChecked: new Date().toISOString()
+          }
+        };
+      }
+      if (recentImport.status === 'failed') {
+        return {
+          files: [],
+          sync: {
+            status: 'failed',
+            message: recentImport.errorMessage || 'Synchronization failed',
+            importId: recentImport.id,
+            lastChecked: new Date().toISOString()
+          }
+        };
+      }
+    }
+
+    // 6. No Telegram downloads exist for this movie
+    return {
+      files: [],
+      sync: {
+        status: 'none',
+        message: 'No downloads available',
+        lastChecked: new Date().toISOString()
+      }
+    };
   } catch (err) {
-    console.warn('[SERVER] Error fetching telegram files:', err.message);
-    return [];
+    console.warn('[SERVER] Error fetching telegram details:', err.message);
+    return {
+      files: [],
+      sync: { status: 'none', message: 'No downloads available', lastChecked: new Date().toISOString() }
+    };
   }
 }
+
+async function getTelegramFilesForMovie(movieId, title) {
+  const result = await getTelegramDetailsForMovie(movieId, title);
+  return result.files;
+}
+
 
 // Get single movie by ID (TMDB) with Prisma Database Caching
 app.get('/api/movies/:id', async (req, res) => {
@@ -2473,9 +2610,12 @@ app.get('/api/movies/:id', async (req, res) => {
           ? memCached.data.download_links 
           : (Array.isArray(memCached.data.downloadLinks) ? memCached.data.downloadLinks : []));
 
-    let telegramFiles = await getTelegramFilesForMovie(movieId, memCached.data?.title);
+    let telegramDetails = await getTelegramDetailsForMovie(movieId, memCached.data?.title);
+    let telegramFiles = telegramDetails.files;
+    let telegramSync = telegramDetails.sync;
     if (telegramFiles.length === 0 && memCached.data?.telegram_files) {
       telegramFiles = parseTelegramFiles(memCached.data.telegram_files);
+      if (telegramFiles.length > 0) telegramSync = { status: 'ready', variantsCount: telegramFiles.length };
     }
 
     return res.json({
@@ -2484,7 +2624,10 @@ app.get('/api/movies/:id', async (req, res) => {
         ...memCached.data,
         download_links: finalLinks,
         downloadLinks: finalLinks,
-        telegram_files: telegramFiles
+        telegram_files: telegramFiles,
+        telegramFiles: telegramFiles,
+        telegram_sync: telegramSync,
+        telegramSync: telegramSync
       }
     });
   }
@@ -2555,12 +2698,16 @@ app.get('/api/movies/:id', async (req, res) => {
       if (ageInHours < 24) {
         console.log(`[PRISMA] Database cache HIT for movie ${movieId} (${ageInHours.toFixed(1)}h old) - ${ddlLinks.length} links`);
         
-        let telegramFiles = parseTelegramFiles(dbCached.telegram_files);
+        let telegramDetails = await getTelegramDetailsForMovie(movieId, dbCached.title);
+        let telegramFiles = telegramDetails.files;
+        let telegramSync = telegramDetails.sync;
+        if (telegramFiles.length === 0 && dbCached.telegram_files) {
+          telegramFiles = parseTelegramFiles(dbCached.telegram_files);
+          if (telegramFiles.length > 0) telegramSync = { status: 'ready', variantsCount: telegramFiles.length };
+        }
         if (telegramFiles.length === 0 && movieWithLinks?.telegram_files) {
           telegramFiles = parseTelegramFiles(movieWithLinks.telegram_files);
-        }
-        if (telegramFiles.length === 0) {
-          telegramFiles = await getTelegramFilesForMovie(movieId, dbCached.title);
+          if (telegramFiles.length > 0) telegramSync = { status: 'ready', variantsCount: telegramFiles.length };
         }
 
         const responseData = {
@@ -2579,6 +2726,9 @@ app.get('/api/movies/:id', async (req, res) => {
           download_links: ddlLinks,
           downloadLinks: ddlLinks,
           telegram_files: telegramFiles,
+          telegramFiles: telegramFiles,
+          telegram_sync: telegramSync,
+          telegramSync: telegramSync,
           is_tv: dbCached.mediaType === 'tv',
           type: dbCached.mediaType
         };
@@ -2599,9 +2749,12 @@ app.get('/api/movies/:id', async (req, res) => {
     } else if (movieWithLinks && (ddlLinks.length > 0 || movieWithLinks.posterPath)) {
       console.log(`[PRISMA] Movie table HIT with downloadLinks for movie ${movieId} (${ddlLinks.length} links)`);
       
-      let telegramFiles = parseTelegramFiles(movieWithLinks.telegram_files);
-      if (telegramFiles.length === 0) {
-        telegramFiles = await getTelegramFilesForMovie(movieId, movieWithLinks.title);
+      let telegramDetails = await getTelegramDetailsForMovie(movieId, movieWithLinks.title);
+      let telegramFiles = telegramDetails.files;
+      let telegramSync = telegramDetails.sync;
+      if (telegramFiles.length === 0 && movieWithLinks.telegram_files) {
+        telegramFiles = parseTelegramFiles(movieWithLinks.telegram_files);
+        if (telegramFiles.length > 0) telegramSync = { status: 'ready', variantsCount: telegramFiles.length };
       }
 
       const responseData = {
@@ -2619,6 +2772,9 @@ app.get('/api/movies/:id', async (req, res) => {
         download_links: ddlLinks,
         downloadLinks: ddlLinks,
         telegram_files: telegramFiles,
+        telegramFiles: telegramFiles,
+        telegram_sync: telegramSync,
+        telegramSync: telegramSync,
         is_tv: false,
         type: 'movie'
       };
@@ -2823,9 +2979,12 @@ app.get('/api/movies/:id', async (req, res) => {
 
     console.log(`[API] DDL Links merged for Fresh Fetch movie ${movieId}: ${ddlLinks.length} link(s) found`);
 
-    let telegramFiles = parseTelegramFiles(dbMovie?.telegram_files);
-    if (telegramFiles.length === 0) {
-      telegramFiles = await getTelegramFilesForMovie(movieId, title);
+    let telegramDetails = await getTelegramDetailsForMovie(movieId, title);
+    let telegramFiles = telegramDetails.files;
+    let telegramSync = telegramDetails.sync;
+    if (telegramFiles.length === 0 && dbMovie?.telegram_files) {
+      telegramFiles = parseTelegramFiles(dbMovie.telegram_files);
+      if (telegramFiles.length > 0) telegramSync = { status: 'ready', variantsCount: telegramFiles.length };
     }
 
     const responseData = {
@@ -2844,6 +3003,9 @@ app.get('/api/movies/:id', async (req, res) => {
       download_links: ddlLinks,
       downloadLinks: ddlLinks,
       telegram_files: telegramFiles,
+      telegramFiles: telegramFiles,
+      telegram_sync: telegramSync,
+      telegramSync: telegramSync,
       is_tv: isTVShow,
       type: isTVShow ? 'tv' : 'movie'
     };
@@ -3659,6 +3821,11 @@ app.listen(PORT, () => {
   console.log('[SERVER] Features: Movies, TV Shows, Season Packs, Unified Search');
   console.log('[SERVER] Streaming: Vidsrc (Movies use IMDb ID, TV uses TMDB ID)');
   console.log('========================================\n');
+
+  // Automatically seed configured primary Telegram channel
+  seedDefaultTelegramSource().catch(err => {
+    console.warn('[SERVER] Notice seeding default Telegram source:', err.message);
+  });
 });
 
 // Graceful shutdown

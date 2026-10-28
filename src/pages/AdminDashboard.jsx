@@ -24,6 +24,7 @@ import {
   Loader2,
   Sparkles,
   Zap,
+  Activity,
 } from 'lucide-react';
 import { API_BASE_URL } from '../config/api';
 
@@ -62,6 +63,23 @@ const AdminDashboard = () => {
   // Webhook Status
   const [webhookInfo, setWebhookInfo] = useState(null);
   const [webhookUrlInput, setWebhookUrlInput] = useState('');
+
+  // Diagnostics & Monitoring State
+  const [diagnostics, setDiagnostics] = useState(null);
+  const [diagLoading, setDiagLoading] = useState(false);
+
+  const fetchDiagnostics = async () => {
+    try {
+      setDiagLoading(true);
+      const res = await axios.get(`${API_BASE_URL}/admin/diagnostics`);
+      setDiagnostics(res.data?.data || null);
+    } catch (err) {
+      console.error('[ADMIN] Error loading diagnostics:', err);
+      showMessage('error', `Diagnostics failed: ${err.message}`);
+    } finally {
+      setDiagLoading(false);
+    }
+  };
 
   useEffect(() => {
     fetchDashboardData();
@@ -187,6 +205,7 @@ const AdminDashboard = () => {
       if (res.data?.success) {
         showMessage('success', `Retry successful: Status is now "${res.data.data?.status}"`);
         fetchDashboardData();
+        fetchDiagnostics();
       } else {
         showMessage('error', `Retry failed: ${res.data?.data?.reason || 'Unknown error'}`);
       }
@@ -424,6 +443,20 @@ const AdminDashboard = () => {
             }`}
           >
             Webhook Configuration
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('diagnostics');
+              fetchDiagnostics();
+            }}
+            className={`pb-4 text-sm font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap flex items-center space-x-2 ${
+              activeTab === 'diagnostics'
+                ? 'border-purple-500 text-white'
+                : 'border-transparent text-[#8b94a6] hover:text-white'
+            }`}
+          >
+            <Activity className="w-4 h-4 text-purple-400" />
+            <span>Pipeline Diagnostics</span>
           </button>
         </div>
 
@@ -769,6 +802,285 @@ const AdminDashboard = () => {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* TAB 5: Pipeline Diagnostics & Monitoring */}
+        {activeTab === 'diagnostics' && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-white/10">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center space-x-2">
+                  <Activity className="w-5 h-5 text-purple-400" />
+                  <span>Telegram Synchronization & Download Diagnostics</span>
+                </h2>
+                <p className="text-xs text-[#8b94a6] mt-0.5">
+                  Live health check of Local Bot API connectivity, download endpoints, import queues, and quality variants.
+                </p>
+              </div>
+
+              <button
+                onClick={fetchDiagnostics}
+                disabled={diagLoading}
+                className="self-start sm:self-auto px-4 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${diagLoading ? 'animate-spin' : ''}`} />
+                <span>Refresh Diagnostics</span>
+              </button>
+            </div>
+
+            {diagLoading && !diagnostics ? (
+              <div className="text-center py-20 rounded-3xl border border-white/10 bg-[#121620]">
+                <Loader2 className="w-8 h-8 text-purple-400 animate-spin mx-auto mb-3" />
+                <p className="text-sm font-bold text-white">Running full pipeline diagnostic checks...</p>
+              </div>
+            ) : diagnostics ? (
+              <div className="space-y-6">
+                {/* System Services Status Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* Telegram Local Bot API */}
+                  <div className="rounded-2xl border border-white/10 bg-[#121620] p-4 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-[#8b94a6]">Local Bot API</span>
+                        {diagnostics.localBotApi?.connected ? (
+                          <span className="inline-flex items-center text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            <CheckCircle2 className="w-3 h-3 mr-1" /> ONLINE
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                            <XCircle className="w-3 h-3 mr-1" /> OFFLINE
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm font-bold text-white truncate">
+                        {diagnostics.localBotApi?.botUsername ? `@${diagnostics.localBotApi.botUsername}` : 'Local API Server'}
+                      </p>
+                      <p className="text-[11px] text-[#8b94a6] truncate font-mono mt-0.5">
+                        {diagnostics.localBotApi?.url || 'http://telegram-api:8081'}
+                      </p>
+                    </div>
+                    <div className="mt-3 pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-[#8b94a6]">
+                      <span>Latency:</span>
+                      <span className="font-mono text-white font-bold">
+                        {diagnostics.localBotApi?.latencyMs ? `${diagnostics.localBotApi.latencyMs} ms` : 'N/A'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Direct Download Service */}
+                  <div className="rounded-2xl border border-white/10 bg-[#121620] p-4 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-[#8b94a6]">Download Service</span>
+                        <span className="inline-flex items-center text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          <CheckCircle2 className="w-3 h-3 mr-1" /> HEALTHY
+                        </span>
+                      </div>
+                      <p className="text-sm font-bold text-white">Signed Stream & Range</p>
+                      <p className="text-[11px] text-[#8b94a6] mt-0.5">
+                        {diagnostics.downloadHealth?.tokenGenerationValid ? 'HMAC Token & Crypto Verified' : 'Standard Fallback'}
+                      </p>
+                    </div>
+                    <div className="mt-3 pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-[#8b94a6]">
+                      <span>HTTP Range Support:</span>
+                      <span className="text-emerald-400 font-bold">RFC 7233 Active</span>
+                    </div>
+                  </div>
+
+                  {/* Last Received Telegram Post */}
+                  <div className="rounded-2xl border border-white/10 bg-[#121620] p-4 flex flex-col justify-between">
+                    <div>
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-[#8b94a6] block mb-1">Last Update Received</span>
+                      <p className="text-sm font-bold text-white truncate">
+                        {diagnostics.pipeline?.lastReceivedUpdate?.fileName || 'No updates yet'}
+                      </p>
+                      <p className="text-[11px] text-purple-300 truncate mt-0.5">
+                        {diagnostics.pipeline?.lastReceivedUpdate?.source?.channelTitle || 'No channel post'}
+                      </p>
+                    </div>
+                    <div className="mt-3 pt-2 border-t border-white/5 text-[11px] text-[#8b94a6]">
+                      {diagnostics.pipeline?.lastReceivedUpdate?.createdAt
+                        ? new Date(diagnostics.pipeline.lastReceivedUpdate.createdAt).toLocaleString()
+                        : 'Awaiting webhook'}
+                    </div>
+                  </div>
+
+                  {/* Last Successful Import */}
+                  <div className="rounded-2xl border border-white/10 bg-[#121620] p-4 flex flex-col justify-between">
+                    <div>
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 block mb-1">Last Successful Import</span>
+                      <p className="text-sm font-bold text-white truncate">
+                        {diagnostics.pipeline?.lastSuccessfulImport?.movie?.title || 'None'}
+                      </p>
+                      <p className="text-[11px] text-emerald-300 font-semibold mt-0.5">
+                        {diagnostics.pipeline?.lastSuccessfulImport?.parsedQuality || 'N/A'} Variant Ready
+                      </p>
+                    </div>
+                    <div className="mt-3 pt-2 border-t border-white/5 text-[11px] text-[#8b94a6]">
+                      {diagnostics.pipeline?.lastSuccessfulImport?.updatedAt
+                        ? new Date(diagnostics.pipeline.lastSuccessfulImport.updatedAt).toLocaleString()
+                        : 'No imports published'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Quality Variants Breakdown */}
+                <div className="rounded-3xl border border-white/10 bg-[#121620] p-5 sm:p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-base font-bold text-white flex items-center space-x-2">
+                      <Layers className="w-4 h-4 text-purple-400" />
+                      <span>Available Video Quality Variants</span>
+                    </h3>
+                    <span className="text-xs text-[#8b94a6]">
+                      {Object.values(diagnostics.variants?.counts || {}).reduce((a, b) => a + b, 0)} Total Variants
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="p-3.5 rounded-xl border border-emerald-500/20 bg-emerald-500/5 text-center">
+                      <span className="text-xs font-bold text-emerald-400">480p SD</span>
+                      <p className="text-2xl font-black text-white mt-1">{diagnostics.variants?.counts?.['480p'] || 0}</p>
+                    </div>
+                    <div className="p-3.5 rounded-xl border border-sky-500/20 bg-sky-500/5 text-center">
+                      <span className="text-xs font-bold text-sky-400">720p HD</span>
+                      <p className="text-2xl font-black text-white mt-1">{diagnostics.variants?.counts?.['720p'] || 0}</p>
+                    </div>
+                    <div className="p-3.5 rounded-xl border border-indigo-500/20 bg-indigo-500/5 text-center">
+                      <span className="text-xs font-bold text-indigo-400">1080p Full HD</span>
+                      <p className="text-2xl font-black text-white mt-1">{diagnostics.variants?.counts?.['1080p'] || 0}</p>
+                    </div>
+                    <div className="p-3.5 rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/5 text-center">
+                      <span className="text-xs font-bold text-fuchsia-400">4K Ultra HD</span>
+                      <p className="text-2xl font-black text-white mt-1">{diagnostics.variants?.counts?.['4K'] || diagnostics.variants?.counts?.['2160p'] || 0}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Failed Imports Section with Safe Retry Mechanism */}
+                <div className="rounded-3xl border border-white/10 bg-[#121620] p-5 sm:p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-base font-bold text-white flex items-center space-x-2">
+                        <XCircle className="w-4 h-4 text-rose-400" />
+                        <span>Failed Imports & Errors ({diagnostics.pipeline?.failedCount || 0})</span>
+                      </h3>
+                      <p className="text-xs text-[#8b94a6] mt-0.5">
+                        Import jobs that encountered resolution detection, network, or format errors. You can safely retry them.
+                      </p>
+                    </div>
+                  </div>
+
+                  {!diagnostics.pipeline?.failedList || diagnostics.pipeline.failedList.length === 0 ? (
+                    <div className="p-6 rounded-2xl bg-black/20 border border-white/5 text-center text-xs text-[#8b94a6]">
+                      <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-60" />
+                      No failed imports recorded. The pipeline is running cleanly.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto custom-scrollbar">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-white/10 text-[#8b94a6] uppercase text-[10px]">
+                            <th className="pb-3 font-bold">File / Movie</th>
+                            <th className="pb-3 font-bold">Channel</th>
+                            <th className="pb-3 font-bold">Error Diagnostic Details</th>
+                            <th className="pb-3 font-bold">Retries</th>
+                            <th className="pb-3 font-bold text-right">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {diagnostics.pipeline.failedList.map((job) => (
+                            <tr key={job.id} className="hover:bg-white/[0.02]">
+                              <td className="py-3 font-medium text-white max-w-xs truncate">
+                                {job.fileName || job.parsedTitle || job.fileId}
+                              </td>
+                              <td className="py-3 text-[#8b94a6]">
+                                {job.source?.channelTitle || job.sourceChannelId}
+                              </td>
+                              <td className="py-3 text-rose-300 font-mono text-[11px] max-w-md truncate">
+                                {job.errorMessage || 'Unknown import error'}
+                              </td>
+                              <td className="py-3 text-[#8b94a6]">
+                                {job.retryCount || 0}
+                              </td>
+                              <td className="py-3 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRetryImport(job.id)}
+                                  disabled={actionLoading}
+                                  className="px-3 py-1.5 rounded-lg bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 border border-purple-500/30 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ml-auto"
+                                >
+                                  <RefreshCw className="w-3 h-3" />
+                                  <span>Retry</span>
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Recent Verified Movie Variants */}
+                {diagnostics.variants?.recent && diagnostics.variants.recent.length > 0 && (
+                  <div className="rounded-3xl border border-white/10 bg-[#121620] p-5 sm:p-6 space-y-4">
+                    <h3 className="text-base font-bold text-white flex items-center space-x-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      <span>Recently Verified Movie Variants</span>
+                    </h3>
+                    <div className="overflow-x-auto custom-scrollbar">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-white/10 text-[#8b94a6] uppercase text-[10px]">
+                            <th className="pb-3 font-bold">Movie Title</th>
+                            <th className="pb-3 font-bold">Quality</th>
+                            <th className="pb-3 font-bold">File Size</th>
+                            <th className="pb-3 font-bold">Codec / Resolution</th>
+                            <th className="pb-3 font-bold">Status</th>
+                            <th className="pb-3 font-bold text-right">Added</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {diagnostics.variants.recent.map((v) => (
+                            <tr key={v.id} className="hover:bg-white/[0.02]">
+                              <td className="py-3 font-semibold text-white">
+                                {v.movie?.title || 'Unknown Title'}
+                              </td>
+                              <td className="py-3">
+                                <span className="px-2 py-0.5 rounded-md font-bold text-[10px] bg-white/10 text-white">
+                                  {v.quality}
+                                </span>
+                              </td>
+                              <td className="py-3 text-[#8b94a6]">
+                                {v.fileSizeFormatted || 'N/A'}
+                              </td>
+                              <td className="py-3 text-[#8b94a6]">
+                                {v.codec || 'H.264'} {v.width && v.height ? `(${v.width}x${v.height})` : ''}
+                              </td>
+                              <td className="py-3">
+                                {v.verifiedResolution ? (
+                                  <span className="inline-flex items-center text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                                    <CheckCircle2 className="w-2.5 h-2.5 mr-1" /> FFprobe Verified
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center text-[10px] text-[#8b94a6] bg-white/5 px-2 py-0.5 rounded-full">
+                                    Parsed
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3 text-right text-[#8b94a6]">
+                                {new Date(v.createdAt).toLocaleDateString()}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
         )}
       </div>

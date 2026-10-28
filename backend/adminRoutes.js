@@ -10,6 +10,10 @@ import {
   manualImport,
 } from './services/telegramImportService.js';
 
+import axios from 'axios';
+import { config } from './storage/config.js';
+import { generateSignedDownloadToken, verifySignedDownloadToken } from './services/downloadService.js';
+
 const router = express.Router();
 
 /**
@@ -1245,5 +1249,142 @@ router.get('/analytics', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/admin/diagnostics
+ * Full pipeline health check, diagnostics, and monitoring
+ */
+router.get('/diagnostics', async (req, res) => {
+  const startTime = Date.now();
+  try {
+    // 1. Check Local Telegram Bot API connectivity
+    let localBotApiStatus = {
+      connected: false,
+      url: config.telegram.localApiUrl,
+      botUsername: null,
+      latencyMs: null,
+      error: null,
+    };
+
+    if (config.telegram.botToken) {
+      try {
+        const pingStart = Date.now();
+        const pingRes = await axios.get(`${config.telegram.localApiUrl}/bot${config.telegram.botToken}/getMe`, { timeout: 5000 });
+        localBotApiStatus = {
+          connected: Boolean(pingRes.data?.ok),
+          url: config.telegram.localApiUrl,
+          botUsername: pingRes.data?.result?.username || null,
+          latencyMs: Date.now() - pingStart,
+          error: pingRes.data?.ok ? null : (pingRes.data?.description || 'Failed getMe'),
+        };
+      } catch (pingErr) {
+        localBotApiStatus.error = pingErr.message;
+      }
+    } else {
+      localBotApiStatus.error = 'TELEGRAM_BOT_TOKEN is not configured';
+    }
+
+    // 2. Test Download Endpoint Health (token crypto check)
+    let downloadHealth = {
+      status: 'healthy',
+      signingSecretConfigured: Boolean(process.env.DOWNLOAD_SIGNING_SECRET || process.env.JWT_SECRET),
+      tokenGenerationValid: false,
+    };
+    try {
+      const testToken = generateSignedDownloadToken({ variantId: 'diag-test', quality: '1080p', ttlSeconds: 60 });
+      const verifyCheck = verifySignedDownloadToken(testToken.token);
+      downloadHealth.tokenGenerationValid = Boolean(verifyCheck?.valid);
+    } catch (tokenErr) {
+      downloadHealth.status = 'degraded';
+      downloadHealth.error = tokenErr.message;
+    }
+
+    // 3. Database queries for pipeline metrics
+    const [
+      channels,
+      lastUpdate,
+      lastSuccess,
+      pendingImports,
+      failedImports,
+      variantsByQuality,
+      recentVariants,
+    ] = await Promise.all([
+      // Connected Telegram Channels
+      prisma.telegramSource.findMany({
+        orderBy: { createdAt: 'desc' },
+      }),
+      // Last received update
+      prisma.telegramImport.findFirst({
+        orderBy: { createdAt: 'desc' },
+        include: { source: { select: { channelTitle: true } }, movie: { select: { title: true } } },
+      }),
+      // Last successful import
+      prisma.telegramImport.findFirst({
+        where: { OR: [{ status: 'published' }, { status: 'verified' }] },
+        orderBy: { updatedAt: 'desc' },
+        include: { source: { select: { channelTitle: true } }, movie: { select: { title: true } } },
+      }),
+      // Pending / Processing imports
+      prisma.telegramImport.findMany({
+        where: { OR: [{ status: 'pending' }, { status: 'processing' }] },
+        orderBy: { createdAt: 'asc' },
+      }),
+      // Failed imports
+      prisma.telegramImport.findMany({
+        where: { status: 'failed' },
+        orderBy: { updatedAt: 'desc' },
+        take: 20,
+        include: { source: { select: { channelTitle: true } } },
+      }),
+      // Variants by quality
+      prisma.movieFileVariant.groupBy({
+        by: ['quality'],
+        _count: { id: true },
+      }),
+      // Recent movie variants
+      prisma.movieFileVariant.findMany({
+        take: 15,
+        orderBy: { createdAt: 'desc' },
+        include: { movie: { select: { title: true, tmdbId: true } } },
+      }),
+    ]);
+
+    const qualityCounts = {};
+    for (const q of variantsByQuality) {
+      qualityCounts[q.quality] = q._count.id;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        timestamp: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+        localBotApi: localBotApiStatus,
+        downloadHealth,
+        channels: {
+          total: channels.length,
+          authorized: channels.filter((c) => c.isAuthorized).length,
+          list: channels,
+        },
+        pipeline: {
+          lastReceivedUpdate: lastUpdate,
+          lastSuccessfulImport: lastSuccess,
+          pendingCount: pendingImports.length,
+          pendingList: pendingImports,
+          failedCount: failedImports.length,
+          failedList: failedImports,
+        },
+        variants: {
+          counts: qualityCounts,
+          recent: recentVariants,
+        },
+      },
+    });
+  } catch (err) {
+    console.error('[ADMIN] Error in /diagnostics:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;
+
 

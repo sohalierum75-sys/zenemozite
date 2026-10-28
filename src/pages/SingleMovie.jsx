@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, Search, MessageSquare, Sparkles, Server } from 'lucide-react';
+import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, Search, MessageSquare, Sparkles, Server, Film } from 'lucide-react';
 import ReportBrokenLink from '../components/ReportBrokenLink';
 import DownloadButton from '../components/DownloadButton';
 import TelegramQualityDownloads from '../components/TelegramQualityDownloads';
@@ -216,6 +216,9 @@ const SingleMovie = () => {
 
   const telegramFiles = Array.isArray(rawTgFiles) ? rawTgFiles : [];
   const hasTelegramFiles = telegramFiles.length > 0;
+  const telegramSync = movie?.telegram_sync || movie?.telegramSync || null;
+  const syncStatus = telegramSync?.status || (hasTelegramFiles ? 'ready' : 'none');
+  const syncError = telegramSync?.message || movie?.telegram_sync_error || null;
 
   // Handler for direct browser download from /api/download/:file_id
   const handleTelegramDownload = (file) => {
@@ -635,13 +638,45 @@ const SingleMovie = () => {
                   isLk={isLk}
                   className="mb-6"
                 />
-              ) : (
-                <div className="glass-card rounded-xl p-5 text-center mb-6 border border-white/5 bg-white/[0.02]">
-                  <div className="flex items-center justify-center space-x-2 mb-1.5">
-                    <AlertCircle className="w-5 h-5 text-amber-400" />
-                    <h4 className="text-base font-bold text-white">Telegram downloads being processed</h4>
+              ) : syncStatus === 'syncing' ? (
+                <div className="glass-card rounded-2xl p-6 text-center mb-6 border border-blue-500/30 bg-blue-500/5">
+                  <div className="flex items-center justify-center space-x-2.5 mb-2">
+                    <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
+                    <h4 className="text-base font-bold text-white">
+                      {isLk ? 'බාගත කිරීම් සමමුහුර්ත වෙමින් පවතී...' : 'Synchronizing Movie Downloads...'}
+                    </h4>
                   </div>
-                  <p className="text-[#8b94a6] text-xs">Download links in 1080p, 720p, and 480p will appear once synced.</p>
+                  <p className="text-[#8b94a6] text-xs max-w-md mx-auto">
+                    {isLk
+                      ? 'වීඩියෝ විභේදනය පරීක්ෂා කරමින් පවතී. 480p, 720p, හෝ 1080p සෘජු බාගත කිරීම් සූදානම් වූ වහාම දිස්වනු ඇත.'
+                      : 'Verifying video resolution and preparing direct downloads. Verified 480p, 720p, or 1080p variants will appear immediately once ready.'}
+                  </p>
+                </div>
+              ) : syncStatus === 'failed' ? (
+                <div className="glass-card rounded-2xl p-5 mb-6 border border-rose-500/30 bg-rose-500/10 text-rose-200">
+                  <div className="flex items-center space-x-2.5 mb-1.5">
+                    <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0" />
+                    <h4 className="text-base font-bold text-white">
+                      {isLk ? 'සමමුහුර්ත කිරීමේ දෝෂයක්' : 'Synchronization Notice'}
+                    </h4>
+                  </div>
+                  <p className="text-xs text-rose-300">
+                    {syncError || (isLk ? 'ටෙලිග්‍රෑම් බාගත කිරීම් සකස් කිරීමේදී ගැටලුවක් ඇති විය.' : 'Telegram movie variant could not be synchronized for this file.')}
+                  </p>
+                  <p className="text-[11px] text-[#8b94a6] mt-1.5">
+                    {isLk
+                      ? 'ඔබට ඉහතින් නොමිලේ නැරඹීමට හෝ පහතින් ඇති ටොරන්ට් සබැඳි භාවිතා කළ හැක.'
+                      : 'You can still stream online above or use available Torrent/Magnet download sources below.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="glass-card rounded-2xl p-4 text-center mb-6 border border-white/5 bg-white/[0.02]">
+                  <div className="flex items-center justify-center space-x-2 text-[#8b94a6]">
+                    <Film className="w-4 h-4 opacity-50" />
+                    <span className="text-xs font-medium">
+                      {isLk ? 'මෙම චිත්‍රපටය සඳහා සෘජු බාගත කිරීම් නොමැත' : 'No direct downloads available for this title'}
+                    </span>
+                  </div>
                 </div>
               )}
 

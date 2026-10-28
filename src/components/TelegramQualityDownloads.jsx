@@ -90,6 +90,31 @@ function getQualityTheme(quality = '') {
 }
 
 /**
+ * Format quality download button text:
+ * "Download 480p — File Size"
+ * "Download 720p HD — File Size"
+ * "Download 1080p Full HD — File Size"
+ */
+function formatQualityButtonLabel(quality = '', size = '', isLk = false) {
+  const q = String(quality || '').toLowerCase().trim();
+  const sizePart = size && size !== 'Unknown' ? ` — ${size}` : '';
+
+  if (isLk) {
+    if (q === '480p') return `බාගත කරන්න 480p${sizePart}`;
+    if (q === '720p') return `බාගත කරන්න 720p HD${sizePart}`;
+    if (q === '1080p') return `බාගත කරන්න 1080p Full HD${sizePart}`;
+    if (q === '4k' || q === '2160p') return `බාගත කරන්න 4K Ultra HD${sizePart}`;
+    return `බාගත කරන්න ${quality}${sizePart}`;
+  }
+
+  if (q === '480p') return `Download 480p${sizePart}`;
+  if (q === '720p') return `Download 720p HD${sizePart}`;
+  if (q === '1080p') return `Download 1080p Full HD${sizePart}`;
+  if (q === '4k' || q === '2160p') return `Download 4K Ultra HD${sizePart}`;
+  return `Download ${quality}${sizePart}`;
+}
+
+/**
  * Professional Telegram Quality Downloads Component
  */
 const TelegramQualityDownloads = ({
@@ -306,7 +331,7 @@ const TelegramQualityDownloads = ({
                   <>
                     <Download className="w-4 h-4 transition-transform group-hover:translate-y-0.5" />
                     <span>
-                      {isLk ? `${theme.short} බාගත කරන්න` : `Download ${theme.short}`}
+                      {formatQualityButtonLabel(quality, size, isLk)}
                     </span>
                   </>
                 )}

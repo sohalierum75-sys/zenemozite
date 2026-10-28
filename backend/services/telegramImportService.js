@@ -167,13 +167,21 @@ export async function processIncomingTelegramPost(message, updateId = null) {
 
   // 2. Validate Source Authorization
   // Rule: Auto-import is allowed ONLY for authorized channels registered in database
-  let source = await prisma.telegramSource.findUnique({
-    where: { channelId },
+  const normalizedChannelId = channelId.replace(/^-100/, '');
+  let source = await prisma.telegramSource.findFirst({
+    where: {
+      OR: [
+        { channelId },
+        { channelId: `-100${normalizedChannelId}` },
+        { channelId: normalizedChannelId }
+      ]
+    },
   });
 
   if (!source) {
     // If channel isn't registered, check if it matches the configured TELEGRAM_CHAT_ID (backward compatibility)
-    if (config.telegram.chatId && (channelId === String(config.telegram.chatId) || channelId.endsWith(String(config.telegram.chatId).replace(/^-100/, '')))) {
+    const configCleanId = config.telegram.chatId ? String(config.telegram.chatId).replace(/^-100/, '') : '';
+    if (configCleanId && normalizedChannelId === configCleanId) {
       source = await prisma.telegramSource.create({
         data: {
           channelId,
@@ -353,6 +361,21 @@ export async function processIncomingTelegramPost(message, updateId = null) {
       });
     }
 
+    // 8. Verify file can be served by Telegram Local Bot API before marking available
+    let canBeServed = false;
+    try {
+      const fileInfo = await getFileInfo(fileId).catch(() => null);
+      if (fileInfo && fileInfo.filePath) {
+        canBeServed = true;
+      }
+    } catch {
+      canBeServed = false;
+    }
+
+    if (!canBeServed) {
+      console.warn(`[TELEGRAM_IMPORT] File ${fileId} cannot be served by Telegram Local Bot API. Marking variant unavailable.`);
+    }
+
     // 10. Attach / Upsert Multi-Quality Download Variant
     const variant = await prisma.movieFileVariant.upsert({
       where: {
@@ -376,7 +399,7 @@ export async function processIncomingTelegramPost(message, updateId = null) {
         audioLanguage: parsedMeta.audioLanguage,
         subtitleInfo: parsedMeta.subtitleInfo,
         verifiedResolution,
-        isAvailable: true,
+        isAvailable: canBeServed,
       },
       create: {
         movieId: movie.id,
@@ -395,7 +418,7 @@ export async function processIncomingTelegramPost(message, updateId = null) {
         audioLanguage: parsedMeta.audioLanguage,
         subtitleInfo: parsedMeta.subtitleInfo,
         verifiedResolution,
-        isAvailable: true,
+        isAvailable: canBeServed,
       },
     });
 
@@ -606,6 +629,48 @@ export async function removeMovieVariant(variantId) {
   return { success: true, remainingCount: remainingVariants.length };
 }
 
+/**
+ * Automatically seeds the primary configured TELEGRAM_CHAT_ID as an authorized source
+ */
+export async function seedDefaultTelegramSource() {
+  const primaryChatId = config.telegram.chatId ? String(config.telegram.chatId).trim() : '';
+  if (!primaryChatId) return null;
+
+  const normalizedChatId = primaryChatId.replace(/^-100/, '');
+  try {
+    const existing = await prisma.telegramSource.findFirst({
+      where: {
+        OR: [
+          { channelId: primaryChatId },
+          { channelId: `-100${normalizedChatId}` },
+          { channelId: normalizedChatId }
+        ]
+      }
+    });
+
+    if (!existing) {
+      const created = await prisma.telegramSource.create({
+        data: {
+          channelId: primaryChatId,
+          channelTitle: 'Primary Authorized Channel',
+          isAuthorized: true,
+          autoImport: true,
+          autoPublish: true,
+          rightsStatus: 'verified',
+          licenseType: 'authorized_primary_cdn',
+          licenseNotes: 'Pre-configured authorized Telegram CDN source from environment'
+        }
+      });
+      console.log(`[TELEGRAM_SOURCE] Auto-seeded primary authorized Telegram channel: ${primaryChatId}`);
+      return created;
+    }
+    return existing;
+  } catch (err) {
+    console.warn('[TELEGRAM_SOURCE] Failed seeding default Telegram source:', err.message);
+    return null;
+  }
+}
+
 export default {
   verifyChannelAccess,
   registerWebhook,
@@ -614,5 +679,6 @@ export default {
   manualImport,
   retryImport,
   removeMovieVariant,
+  seedDefaultTelegramSource,
   WEBHOOK_SECRET_TOKEN,
 };
