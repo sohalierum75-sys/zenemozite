@@ -301,6 +301,7 @@ export async function handleDirectStreaming({ req, res, targetId, requestedQuali
     }
 
     // Standard Download Headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${outFileName}"`);
     res.setHeader('Accept-Ranges', 'bytes');

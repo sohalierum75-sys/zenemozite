@@ -20,7 +20,7 @@ import express from 'express';
 import prisma from '../prisma/client.js';
 import { startCacheJob, peekCacheEntry, getCacheStats, cacheMovie, resetMovieForRetry } from './hybridCache.js';
 import { createChunkStream, buildPartFileName } from './chunker.js';
-import { formatBytes } from './config.js';
+import { config, formatBytes } from './config.js';
 import { resolveTelegramMedia, streamMediaToResponse } from './userbot.js';
 import { streamTorrentFile } from './torrentStream.js';
 import {
@@ -393,7 +393,6 @@ export async function handleDownload(req, res) {
     // JSON info mode (only if explicitly requested with ?info=1)
     if (wantsJsonInfo) {
       const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-      const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost';
       const parts = chunks.map((chunk, idx) => ({
         part: idx + 1,
         fileName: buildPartFileName(fileName, idx, chunks.length),
@@ -401,7 +400,7 @@ export async function handleDownload(req, res) {
         sizeReadable: formatBytes(chunk.chunkSize),
         fileId: chunk.telegramFileId,
         messageId: chunk.telegramMessageId,
-        downloadUrl: `${proto}://${host}/api/download/${movie.id}?part=${idx + 1}`,
+        downloadUrl: `/api/download/${movie.id}?part=${idx + 1}`,
       }));
 
       const persistedFileIds = parseTelegramFileIds(movie.telegramFileIds);
@@ -412,7 +411,7 @@ export async function handleDownload(req, res) {
       return res.json({
         success: true,
         cached: true,
-        downloadUrl: `${proto}://${host}/api/download/${movie.id}`,
+        downloadUrl: `/api/download/${movie.id}`,
         parts,
         chunkCount: chunks.length,
         telegramFileIds,
@@ -546,6 +545,18 @@ router.get('/stream/:file_id', handleDownload);
 // ---------------------------------------------------------------------------
 const downloadRouter = express.Router();
 
+// CORS middleware on downloadRouter for reliable browser direct downloads
+downloadRouter.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Range, Accept-Ranges');
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
+});
+
 // 1. Generate cryptographically signed download URL
 downloadRouter.get('/token/:targetId', (req, res) => {
   try {
@@ -582,6 +593,19 @@ downloadRouter.get('/:file_id', handleDownload);
 downloadRouter.get('/:idOrTitle', handleDownload);
 
 const streamRouter = express.Router();
+
+// CORS middleware on streamRouter
+streamRouter.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Range, Accept-Ranges');
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
+});
+
 streamRouter.get('/:file_id', handleDownload);
 
 export { downloadRouter, streamRouter };

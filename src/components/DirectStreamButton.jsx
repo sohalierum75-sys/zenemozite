@@ -28,13 +28,18 @@ const DirectStreamButton = ({
     setDownloading(true);
     setDownloadStarted(true);
 
-    // Build the direct streaming endpoint URL with force download flag
+    // Build the direct download endpoint URL with force download flag
     const params = new URLSearchParams();
     if (magnetLink) params.append('magnet', magnetLink);
     if (title) params.append('title', title);
     params.append('dl', '1');
 
-    const downloadUrl = `${API_BASE_URL}/stream/${encodeURIComponent(identifier)}?${params.toString()}`;
+    // Clean public relative path: /api/download/:file_id
+    const base = (API_BASE_URL && !API_BASE_URL.includes('localhost') && !API_BASE_URL.includes('telegram-api') && !API_BASE_URL.includes('8081'))
+      ? API_BASE_URL
+      : '/api';
+
+    const downloadUrl = `${base}/download/${encodeURIComponent(identifier)}?${params.toString()}`;
 
     console.log('[DirectDownload] Triggering direct file download from:', downloadUrl);
 

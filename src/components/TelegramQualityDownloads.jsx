@@ -152,7 +152,7 @@ const TelegramQualityDownloads = ({
   /**
    * Request signed token and trigger direct secure file download
    */
-  const handleDownload = async (file) => {
+  const handleDownload = (file) => {
     const fileId = file.file_id || file.telegramFileId;
     if (!fileId) return;
 
@@ -160,25 +160,17 @@ const TelegramQualityDownloads = ({
     setDownloadError(null);
 
     try {
-      console.log(`[DOWNLOAD] Requesting secure signed download token for ${fileId}...`);
-
-      // 1. Request cryptographically signed token
-      const tokenUrl = `${API_BASE_URL}/download/token/${encodeURIComponent(fileId)}?quality=${encodeURIComponent(file.quality || '1080p')}`;
-      const tokenRes = await axios.get(tokenUrl, { timeout: 10000 });
-
-      let directUrl = '';
-      if (tokenRes.data?.downloadUrl) {
-        directUrl = tokenRes.data.downloadUrl;
-      } else {
-        // Fallback to direct /api/download/:file_id
-        directUrl = `${API_BASE_URL}/download/${encodeURIComponent(fileId)}?title=${encodeURIComponent(movie?.title || 'movie')}`;
-      }
-
-      console.log(`[DOWNLOAD] Initializing browser download stream: ${directUrl}`);
-
-      // 2. Trigger instant browser download with proper filename
       const safeTitle = (movie?.title || 'movie').replace(/[^\w.\- ]/g, '_');
       const cleanFileName = `${safeTitle} [${file.quality || 'video'}].mp4`;
+
+      // Strictly public relative path: /api/download/:file_id
+      const base = (API_BASE_URL && !API_BASE_URL.includes('localhost') && !API_BASE_URL.includes('telegram-api') && !API_BASE_URL.includes('8081'))
+        ? API_BASE_URL
+        : '/api';
+
+      const directUrl = `${base}/download/${encodeURIComponent(fileId)}?title=${encodeURIComponent(safeTitle)}&quality=${encodeURIComponent(file.quality || '1080p')}`;
+
+      console.log(`[DOWNLOAD] Initializing browser direct download: ${directUrl}`);
 
       const link = document.createElement('a');
       link.href = directUrl;
@@ -187,13 +179,12 @@ const TelegramQualityDownloads = ({
       link.click();
       document.body.removeChild(link);
 
-      // Brief UI reset
       setTimeout(() => {
         setDownloadingId(null);
       }, 2500);
     } catch (err) {
       console.error('[DOWNLOAD] Direct download failed:', err);
-      const errMsg = err.response?.data?.error || err.response?.data?.message || err.message || 'Download server connection failed';
+      const errMsg = err.response?.data?.error || err.response?.data?.message || err.message || 'Download connection failed';
       setDownloadError(`Failed to start download: ${errMsg}`);
       setDownloadingId(null);
     }

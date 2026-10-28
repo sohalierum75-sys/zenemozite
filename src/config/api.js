@@ -15,13 +15,21 @@ export const getApiBaseUrl = () => {
 
   if (envUrl && typeof envUrl === 'string' && envUrl.trim().length > 0) {
     const trimmed = envUrl.trim().replace(/\/+$/, '');
-    // Do not use if it points to localhost or 127.0.0.1 on client machines
-    if (!trimmed.includes('localhost') && !trimmed.includes('127.0.0.1')) {
+    // Strictly reject internal Docker container names, localhost, or private daemon ports
+    const isInternal =
+      trimmed.includes('localhost') ||
+      trimmed.includes('127.0.0.1') ||
+      trimmed.includes('telegram-api') ||
+      trimmed.includes('zenemozite') ||
+      trimmed.includes(':8081') ||
+      trimmed.includes(':5000');
+
+    if (!isInternal && (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('/'))) {
       return trimmed;
     }
   }
 
-  // Default to relative /api which works universally on any domain, host, or port
+  // Default to relative /api which works universally in all browsers on any domain or port
   return '/api';
 };
 
