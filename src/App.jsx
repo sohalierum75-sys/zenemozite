@@ -10,12 +10,14 @@ import SingleTV from './pages/SingleTV';
 import SearchResults from './pages/SearchResults';
 import AdminDashboard from './pages/AdminDashboard';
 import { LocaleProvider } from './context/LocaleContext';
+import ErrorBoundary from './components/ErrorBoundary';
 
 function App() {
   return (
     <Router>
-      <LocaleProvider>
-      <div className="relative flex flex-col min-h-screen bg-[#0f1115] overflow-hidden">
+      <ErrorBoundary>
+        <LocaleProvider>
+          <div className="relative flex flex-col min-h-screen bg-[#0f1115] overflow-hidden">
         {/* Ambient Mesh Glow Atmosphere - Fixed to Viewport */}
         <div className="fixed inset-0 pointer-events-none z-0" aria-hidden="true">
           <div 
@@ -49,7 +51,8 @@ function App() {
           <Footer />
         </div>
       </div>
-      </LocaleProvider>
+        </LocaleProvider>
+      </ErrorBoundary>
     </Router>
   );
 }

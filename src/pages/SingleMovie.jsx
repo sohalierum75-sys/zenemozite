@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, Search, MessageSquare, Sparkles, Server, Film } from 'lucide-react';
 import ReportBrokenLink from '../components/ReportBrokenLink';
 import DownloadButton from '../components/DownloadButton';
+import DirectStreamButton from '../components/DirectStreamButton';
 import TelegramQualityDownloads from '../components/TelegramQualityDownloads';
 import { useLocale } from '../context/LocaleContext';
 
