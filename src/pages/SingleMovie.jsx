@@ -3,7 +3,6 @@ import { useParams, Link } from 'react-router-dom';
 import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, Search, MessageSquare, Sparkles, Server } from 'lucide-react';
 import ReportBrokenLink from '../components/ReportBrokenLink';
 import DownloadButton from '../components/DownloadButton';
-import DirectStreamButton from '../components/DirectStreamButton';
 import { useLocale } from '../context/LocaleContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
@@ -729,13 +728,13 @@ const SingleMovie = () => {
                       </div>
                       <div>
                         <h3 className="text-xl font-extrabold text-white tracking-tight flex items-center gap-2">
-                          <span>Webtor.io Torrent Streaming & Downloads</span>
+                          <span>Torrent & Magnet Downloads</span>
                           <span className="text-xs px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30 font-semibold">
-                            P2P & Webtor
+                            Torrent Sources
                           </span>
                         </h3>
                         <p className="text-xs text-[#8b94a6] mt-0.5">
-                          Stream instantly online via Webtor or download torrent/magnet files
+                          Download options for high-speed torrent and magnet files
                         </p>
                       </div>
                     </div>
@@ -744,11 +743,10 @@ const SingleMovie = () => {
                     </span>
                   </div>
 
-                  {/* Torrents with Webtor Integration */}
+                  {/* Torrents List */}
                   <div className="space-y-4">
                     {movie?.torrents?.map((torrent, index) => {
                       if (!torrent || !torrent.url) return null;
-                      const webtorStreamUrl = `https://webtor.io/${torrent.url}`;
 
                       return (
                         <div key={`torrent-${index}-${torrent.quality || index}`} className="rounded-xl border border-white/10 bg-black/40 backdrop-blur-md p-4 transition-all duration-300 hover:border-white/20">
@@ -776,22 +774,8 @@ const SingleMovie = () => {
                             </div>
                           </div>
 
-                          {/* Action Buttons: Webtor stream, DownloadButton dropdown, DirectStreamButton */}
-                          <div className="mt-3 flex flex-col sm:flex-row items-stretch gap-3">
-                            {/* Webtor.io Instant Stream Button */}
-                            <a
-                              href={webtorStreamUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="sm:w-auto px-4 py-3 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white font-bold text-sm flex items-center justify-center space-x-2 shadow-lg shadow-orange-500/20 transition-all duration-300 hover:-translate-y-0.5 active:scale-95 cursor-pointer"
-                              title="Stream or download instantly using Webtor.io"
-                            >
-                              <Play className="w-4 h-4" />
-                              <span>Stream on Webtor</span>
-                              <ExternalLink className="w-3.5 h-3.5 opacity-80" />
-                            </a>
-
-                            {/* DownloadButton Dropdown with DDL and Webtor Fallback */}
+                          {/* Action Button: ONLY Download Options button */}
+                          <div className="mt-3 relative z-10 focus-within:z-50">
                             <DownloadButton
                               movieId={movie?.title}
                               title={movie?.title}
@@ -799,16 +783,7 @@ const SingleMovie = () => {
                               downloadLinks={directLinks}
                               movie={movie}
                               label={isLk ? 'Download Options | බාගත විකල්ප' : 'Download Options'}
-                              className="flex-1 bg-[#ff9900] text-[#0f1115] hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] hover:-translate-y-0.5"
-                            />
-
-                            {/* Direct Stream / Download */}
-                            <DirectStreamButton
-                              movieId={movie?.title}
-                              title={movie?.title}
-                              magnetLink={torrent.url}
-                              label={isLk ? 'Direct Download | සෘජු බාගත කිරීම' : 'Direct Download'}
-                              className="w-full sm:w-auto flex-1"
+                              className="w-full bg-[#ff9900] text-[#0f1115] hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] hover:-translate-y-0.5"
                             />
                           </div>
                         </div>
@@ -835,7 +810,7 @@ const SingleMovie = () => {
                     <p className="text-[#8b94a6] text-sm leading-relaxed">
                       <strong className="text-white">Download Options:</strong><br />
                       • <strong className="text-[#a855f7]">Telegram Direct:</strong> Click any quality button (<strong className="text-[#6366f1]">1080p</strong>, <strong className="text-[#0ea5e9]">720p</strong>, or <strong className="text-[#f59e0b]">480p</strong>) for instant high-speed browser downloads.<br />
-                      • <strong className="text-[#f97316]">Webtor.io & Torrents:</strong> Stream instantly online via Webtor or download torrent/magnet files using your favorite client.
+                      • <strong className="text-[#f97316]">Torrent & Cloud Downloads:</strong> Click "Download Options" to choose between direct cloud links, torrent magnets, or streaming options.
                     </p>
                   </div>
                 </div>
