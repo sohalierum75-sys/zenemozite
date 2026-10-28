@@ -91,15 +91,35 @@ export async function handleDownload(req, res) {
     const partNumber = parseInt(req.query.part, 10);
     const safeTitle = (title || 'movie').replace(/[^\w.\- ]/g, '_');
 
+    // Ensure CORS headers allow downloads and expose content-disposition
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Range, Accept-Ranges');
+
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
+
     // 1. Direct Telegram channel message ID (e.g. /api/download/12345 or msg_12345)
     const isNumericMsg = /^\d+$/.test(file_id);
     const isMsgPrefixed = /^msg_(\d+)$/.test(file_id);
     if (isNumericMsg || isMsgPrefixed) {
       const msgId = isNumericMsg ? parseInt(file_id, 10) : parseInt(file_id.slice(4), 10);
-      const media = await resolveTelegramMedia({ messageId: msgId });
-      if (!media) {
-        return res.status(404).json({ success: false, message: `Message ${msgId} not found in Telegram channel.` });
+      let media = null;
+      try {
+        media = await resolveTelegramMedia({ messageId: msgId, title });
+      } catch (mErr) {
+        console.warn(`[PASS_THROUGH_DOWNLOAD] resolveTelegramMedia error for msg ${msgId}:`, mErr.message);
       }
+
+      if (!media) {
+        return res.status(404).json({
+          success: false,
+          message: `Telegram message ${msgId} could not be resolved or file is not found (404).`,
+        });
+      }
+
       return await streamMediaToResponse({
         req,
         res,
@@ -107,7 +127,7 @@ export async function handleDownload(req, res) {
         localFilePath: media.localFilePath,
         fileSize: media.fileSize,
         mimeType: 'application/octet-stream',
-        fileName: media.fileName || 'movie.mp4',
+        fileName: media.fileName || `${safeTitle}.mp4`,
       });
     }
 
@@ -120,22 +140,32 @@ export async function handleDownload(req, res) {
         ],
       },
       include: { movie: true },
-    });
+    }).catch(() => null);
 
     if (chunk) {
       const movie = chunk.movie;
       const partIdx = chunk.chunkIndex;
-      const outFileName = movie.fileName
+      const outFileName = movie?.fileName
         ? buildPartFileName(movie.fileName, partIdx, 1)
-        : `${movie.title || 'movie'}.mp4`;
-      const media = await resolveTelegramMedia({
-        messageId: chunk.telegramMessageId,
-        fileId: chunk.telegramFileId,
-        title: movie.title,
-      });
-      if (!media) {
-        return res.status(404).json({ success: false, message: 'Telegram media for chunk could not be resolved.' });
+        : `${movie?.title || 'movie'}.mp4`;
+      let media = null;
+      try {
+        media = await resolveTelegramMedia({
+          messageId: chunk.telegramMessageId,
+          fileId: chunk.telegramFileId,
+          title: movie?.title,
+        });
+      } catch (err) {
+        console.warn(`[PASS_THROUGH_DOWNLOAD] Error resolving chunk media:`, err.message);
       }
+
+      if (!media) {
+        return res.status(404).json({
+          success: false,
+          message: 'Telegram media for chunk could not be resolved or is not yet available (404).',
+        });
+      }
+
       return await streamMediaToResponse({
         req,
         res,
@@ -173,20 +203,30 @@ export async function handleDownload(req, res) {
       const movieWithTgFile = await prisma.movie.findFirst({
         where: {
           telegram_files: {
-            contains: file_id
-          }
-        }
-      });
+            contains: file_id,
+          },
+        },
+      }).catch(() => null);
 
       if (movieWithTgFile?.telegram_files) {
-        const tgList = JSON.parse(movieWithTgFile.telegram_files);
-        const matched = Array.isArray(tgList) && tgList.find(f => f.file_id === file_id);
+        let tgList = [];
+        try {
+          tgList = JSON.parse(movieWithTgFile.telegram_files);
+        } catch {}
+
+        const matched = Array.isArray(tgList) && tgList.find((f) => f.file_id === file_id);
         if (matched) {
-          const directMedia = await resolveTelegramMedia({
-            fileId: file_id,
-            messageId: /^\d+$/.test(file_id) ? parseInt(file_id, 10) : undefined,
-            title: movieWithTgFile.title
-          });
+          let directMedia = null;
+          try {
+            directMedia = await resolveTelegramMedia({
+              fileId: file_id,
+              messageId: /^\d+$/.test(file_id) ? parseInt(file_id, 10) : undefined,
+              title: movieWithTgFile.title,
+            });
+          } catch (mErr) {
+            console.warn(`[PASS_THROUGH_DOWNLOAD] resolveTelegramMedia error for matched file ${file_id}:`, mErr.message);
+          }
+
           if (directMedia && (directMedia.document || directMedia.localFilePath)) {
             const outName = `${movieWithTgFile.title} - ${matched.quality || '1080p'}.mp4`.replace(/[^\w.\- ]/g, '_');
             return await streamMediaToResponse({
@@ -198,6 +238,12 @@ export async function handleDownload(req, res) {
               mimeType: 'application/octet-stream',
               fileName: outName,
             });
+          } else {
+            return res.status(404).json({
+              success: false,
+              message: `Telegram download for "${movieWithTgFile.title}" (${matched.quality || '1080p'}) has not finished syncing or is not available on Telegram storage server (404).`,
+              fileId: file_id,
+            });
           }
         }
       }
@@ -206,21 +252,13 @@ export async function handleDownload(req, res) {
     }
 
     // 4. Check if file_id is a Movie ID or Movie Title in the cache database
-    const entry = await peekCacheEntry(file_id);
+    const entry = await peekCacheEntry(file_id).catch(() => null);
     const activeMagnet = magnetLink || entry?.movie?.magnetLink || null;
     const movieTitle = entry?.movie?.title || title || file_id;
     const movieFileName = entry?.movie?.fileName || `${(movieTitle || 'movie').replace(/[^\w.\- ]/g, '_')}.mp4`;
 
     // ---- Not in DB at all:
     if (!entry) {
-      if (!activeMagnet && !title) {
-        return res.status(404).json({
-          success: false,
-          message: 'Movie not found. Provide ?magnet= (and optionally ?title=) to start download.',
-        });
-      }
-
-      // If magnet provided and not requesting JSON, stream torrent directly as attachment
       if (activeMagnet && !wantsJsonInfo) {
         console.log(`[PASS_THROUGH_DOWNLOAD] Streaming direct torrent download for un-cached movie "${movieTitle}"`);
         cacheMovie({ title: movieTitle, magnetLink: activeMagnet, fallbackTitle: file_id }).catch(() => {});
@@ -232,16 +270,9 @@ export async function handleDownload(req, res) {
         });
       }
 
-      console.log(`[PASS_THROUGH_DOWNLOAD] Queueing new download request: key="${file_id}" | ?title="${title || 'none'}"`);
-      const movie = await cacheMovie({ title, magnetLink: activeMagnet, fallbackTitle: file_id });
-      return res.status(202).json({
-        success: true,
-        cached: false,
-        downloadUrl: null,
-        state: 'queued',
-        movieId: movie.id,
-        title: movie.title,
-        message: 'Movie queued for caching. Poll this endpoint — downloadUrl appears once cached.',
+      return res.status(404).json({
+        success: false,
+        message: `Requested download target "${file_id}" was not found or Telegram file has not been synced yet (404).`,
       });
     }
 
@@ -405,11 +436,11 @@ export async function handleDownload(req, res) {
     return;
   } catch (err) {
     if (res.headersSent) {
-      console.error('[PASS_THROUGH_DOWNLOAD] Stream error after headers sent — destroying connection');
-      res.destroy();
+      console.error('[PASS_THROUGH_DOWNLOAD] Stream error after headers sent:', err.message);
+      res.end();
       return;
     }
-    const status = httpStatus(err);
+    const status = httpStatus(err, 500);
     console.error(`[PASS_THROUGH_DOWNLOAD] GET /download failed (${status}):`, err.message);
     return res.status(status).json({ success: false, message: err.message });
   }

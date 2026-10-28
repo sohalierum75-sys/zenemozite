@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Download, Loader2, CheckCircle2 } from 'lucide-react';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+import { API_BASE_URL } from '../config/api';
 
 /**
  * DirectStreamButton Component

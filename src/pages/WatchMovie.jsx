@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Loader2, AlertCircle, ChevronLeft } from 'lucide-react';
 import MoviePlayer from '../components/MoviePlayer';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+import { API_BASE_URL } from '../config/api';
 const VIDSRC_BASE_URL = 'https://vidsrc.me/embed/movie';
 
 const WatchMovie = () => {

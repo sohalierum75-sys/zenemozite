@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Loader2, AlertCircle, CheckCircle2, Wrench, RotateCcw } from 'lucide-react';
 import { useLocale } from '../context/LocaleContext';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+import { API_BASE_URL } from '../config/api';
 
 // Rotating status messages shown while the backend scrapes multiple providers
 const LOADING_STAGES = [

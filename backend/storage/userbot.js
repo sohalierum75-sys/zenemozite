@@ -311,6 +311,16 @@ export async function streamMediaToResponse({
   const totalSize = Number(fileSize) || 0;
   const rangeHeader = req.headers.range;
 
+  // Set permissive CORS headers on download stream
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Range, Accept-Ranges');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   // ---------------------------------------------------------------------------
   // 1. GramJS MTProto Direct Streaming (Readable.from conversion)
   // ---------------------------------------------------------------------------
@@ -385,9 +395,9 @@ export async function streamMediaToResponse({
         }
         console.error(`[USERBOT_STREAM] Stream error for "${safeFileName}":`, streamErr.message);
         if (!res.headersSent) {
-          return res.status(500).json({ success: false, message: streamErr.message });
+          return res.status(500).json({ success: false, message: `Telegram download failed: ${streamErr.message}` });
         }
-        res.destroy();
+        res.end();
         return;
       } finally {
         req.removeListener('close', onReqClose);
@@ -397,11 +407,61 @@ export async function streamMediaToResponse({
 
   // ---------------------------------------------------------------------------
   // 2. Direct HTTP Stream Piping (Pass-through from Local Telegram API)
-  // Initiates HTTP stream immediately from Telegram API URL and directly pipes
-  // to the Express response (res) with attachment headers.
-  // Zero-Storage: starts downloading in browser immediately without saving to VPS disk!
   // ---------------------------------------------------------------------------
   if (localFilePath) {
+    // Check if the file is already available directly on local disk
+    let diskPath = null;
+    try {
+      diskPath = resolveLocalDiskPath(localFilePath);
+    } catch {
+      diskPath = null;
+    }
+
+    if (diskPath && fs.existsSync(diskPath)) {
+      try {
+        const stat = fs.statSync(diskPath);
+        const actualSize = stat.size;
+        let start = 0;
+        let end = actualSize - 1;
+        let statusCode = 200;
+
+        if (rangeHeader) {
+          const parts = rangeHeader.replace(/bytes=/, '').split('-');
+          const rawStart = parseInt(parts[0], 10);
+          const rawEnd = parts[1] ? parseInt(parts[1], 10) : actualSize - 1;
+          start = !isNaN(rawStart) ? Math.max(0, rawStart) : 0;
+          end = !isNaN(rawEnd) ? Math.min(rawEnd, actualSize - 1) : actualSize - 1;
+
+          if (start >= actualSize || start > end) {
+            res.status(416).setHeader('Content-Range', `bytes */${actualSize}`);
+            return res.end();
+          }
+
+          statusCode = 206;
+          res.setHeader('Content-Range', `bytes ${start}-${end}/${actualSize}`);
+        }
+
+        const contentLength = end - start + 1;
+        res.setHeader('Content-Disposition', `attachment; filename="${safeFileName}"`);
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Length', String(contentLength));
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.status(statusCode);
+
+        const readStream = fs.createReadStream(diskPath, { start, end });
+        await pipeline(readStream, res);
+        return;
+      } catch (diskErr) {
+        if (diskErr.code === 'ERR_STREAM_PREMATURE_CLOSE') return;
+        console.error('[LOCAL_DISK_STREAM] Failed to stream from local disk:', diskErr.message);
+        if (!res.headersSent) {
+          return res.status(500).json({ success: false, message: `Failed to stream file from disk: ${diskErr.message}` });
+        }
+        res.end();
+        return;
+      }
+    }
+
     const streamUrl = `${config.telegram.localApiUrl}/file/bot${config.telegram.botToken}/${localFilePath}`;
     const headers = {};
     if (rangeHeader) {
@@ -413,7 +473,8 @@ export async function streamMediaToResponse({
       const response = await axios.get(streamUrl, {
         headers,
         responseType: 'stream',
-        timeout: 0,
+        timeout: 15000,
+        validateStatus: (status) => status >= 200 && status < 400,
       });
 
       // Force direct download headers
@@ -431,11 +492,14 @@ export async function streamMediaToResponse({
       res.status(response.status || 200);
 
       // Handle client cancellation / disconnect
-      req.once('close', () => {
+      let clientClosed = false;
+      const onClientClose = () => {
+        clientClosed = true;
         if (response.data && response.data.destroy) {
           response.data.destroy();
         }
-      });
+      };
+      req.once('close', onClientClose);
 
       // Zero-Storage cleanup: if Local Bot API cached a copy in tg-api-data, purge it
       const cleanupDisk = () => {
@@ -456,9 +520,19 @@ export async function streamMediaToResponse({
       req.once('close', cleanupDisk);
 
       // Directly pipe Telegram HTTP stream into Express response
-      await pipeline(response.data, res);
-      console.log(`[PASS_THROUGH_STREAM] Completed streaming "${safeFileName}" to client`);
-      return;
+      try {
+        await pipeline(response.data, res);
+        console.log(`[PASS_THROUGH_STREAM] Completed streaming "${safeFileName}" to client`);
+        return;
+      } catch (pipeErr) {
+        if (clientClosed || pipeErr.code === 'ERR_STREAM_PREMATURE_CLOSE') {
+          console.log(`[PASS_THROUGH_STREAM] Client closed download for "${safeFileName}"`);
+          return;
+        }
+        throw pipeErr;
+      } finally {
+        req.removeListener('close', onClientClose);
+      }
     } catch (err) {
       if (err.code === 'ERR_STREAM_PREMATURE_CLOSE') {
         console.log(`[PASS_THROUGH_STREAM] Download cancelled by user for "${safeFileName}"`);
@@ -466,12 +540,28 @@ export async function streamMediaToResponse({
       }
       console.error('[PASS_THROUGH_STREAM] Direct HTTP stream piping failed:', err.message);
       if (!res.headersSent) {
-        return res.status(502).json({ success: false, message: 'Stream failed from Telegram source.' });
+        const isNotFound = err.response?.status === 404;
+        const isConnRefused = err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT';
+        const statusCode = isNotFound ? 404 : (isConnRefused ? 503 : 500);
+        return res.status(statusCode).json({
+          success: false,
+          message: isNotFound
+            ? 'The requested file was not found on Telegram Local API server or has not finished downloading yet (404).'
+            : (isConnRefused
+                ? 'Telegram Local API server is unreachable. Please verify the storage service.'
+                : `Telegram stream error: ${err.message}`),
+        });
       }
-      res.destroy();
+      res.end();
       return;
     }
   }
 
-  throw new Error('No valid Telegram MTProto document or file path available to stream.');
+  if (!res.headersSent) {
+    return res.status(404).json({
+      success: false,
+      message: 'No valid Telegram MTProto document or file path available to stream (404).',
+    });
+  }
+  res.end();
 }

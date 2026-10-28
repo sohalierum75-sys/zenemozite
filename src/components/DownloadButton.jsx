@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { Download, ExternalLink, ChevronDown, ChevronUp, Server, HardDrive, Sparkles, X, CheckCircle2 } from 'lucide-react';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+import { API_BASE_URL } from '../config/api';
 const WEBTOR_URL = 'https://webtor.io/';
 
 /**

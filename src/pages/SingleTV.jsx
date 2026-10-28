@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, ChevronDown, MessageSquare } from 'lucide-react';
 import { useLocale } from '../context/LocaleContext';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+import { API_BASE_URL } from '../config/api';
 
 const DEFAULT_POSTER = 'https://via.placeholder.com/400x600/1a1d29/8b94a6?text=No+Poster';
 const DEFAULT_BACKDROP = 'https://via.placeholder.com/1920x1080/0f1115/8b94a6?text=No+Image';

@@ -4,7 +4,7 @@ import { Film, Star, Clock, Calendar, Loader2, AlertCircle, ChevronRight, Tv } f
 import HeroBanner from '../components/HeroBanner';
 import { useLocale } from '../context/LocaleContext';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+import { API_BASE_URL } from '../config/api';
 
 const TamilMovies = () => {
   const { isLk } = useLocale();

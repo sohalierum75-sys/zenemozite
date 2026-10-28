@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import HeroBanner from '../components/HeroBanner';
 import { useLocale } from '../context/LocaleContext';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+import { API_BASE_URL } from '../config/api';
 
 // Cursor-Aware Card Component
 const MovieCard = ({ movie, className = '', index = 0 }) => {
@@ -137,7 +137,7 @@ const Home = () => {
       }
     } catch (err) {
       console.error('[FRONTEND] Error fetching movies:', err);
-      setError('Unable to connect to server. Please make sure the backend is running on http://localhost:5000');
+      setError('Unable to connect to server. Please check your connection or ensure backend is running.');
     } finally {
       setLoading(false);
       setLoadingMore(false);

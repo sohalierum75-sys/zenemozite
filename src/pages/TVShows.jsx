@@ -4,7 +4,7 @@ import { Tv, Star, Clock, Calendar, Loader2, AlertCircle, ChevronRight } from 'l
 import HeroBanner from '../components/HeroBanner';
 import { useLocale } from '../context/LocaleContext';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+import { API_BASE_URL } from '../config/api';
 
 const TVShows = () => {
   const { isLk } = useLocale();
