@@ -600,45 +600,46 @@ const SingleMovie = () => {
                 </div>
               )}
 
-              {/* 1. Primary Movie Download Action Bar (ALWAYS Available & Never Blocked by Telegram) */}
-              <div className="glass-card rounded-2xl p-5 mb-6 border border-[var(--accent)]/30 bg-gradient-to-br from-[var(--accent)]/10 via-black/40 to-black/60 shadow-xl relative z-30 focus-within:z-50">
-                <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-                  <div className="flex items-center space-x-2">
-                    <Sparkles className="w-5 h-5 text-[var(--accent)] animate-pulse" />
-                    <h4 className="text-white font-bold text-lg">
-                      {isLk ? 'චිත්‍රපටය බාගත කරන්න (සෘජු බාගත කිරීම්)' : 'Download Movie (Direct Access)'}
-                    </h4>
-                  </div>
-                  {hasDirectLinks && (
+              {/* 1. Direct Cloud Downloads Section (Google Drive, Mega, Pixeldrain, YTS Direct) */}
+              {hasDirectLinks && (
+                <div className="glass-card rounded-2xl p-6 mb-6 border border-emerald-500/20 bg-gradient-to-br from-emerald-500/5 via-black/40 to-black/60 shadow-xl relative z-30 focus-within:z-50">
+                  <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+                    <div className="flex items-center space-x-2">
+                      <Sparkles className="w-5 h-5 text-emerald-400" />
+                      <h4 className="text-white font-bold text-lg">
+                        {isLk ? 'සෘජු බාගත කිරීම් (DDL)' : 'Direct Cloud Downloads (DDL)'}
+                      </h4>
+                    </div>
                     <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
-                      {directLinks.length} Direct Link{directLinks.length > 1 ? 's' : ''} Available
+                      {directLinks.length} Link{directLinks.length > 1 ? 's' : ''} Available
                     </span>
-                  )}
+                  </div>
+                  <p className="text-[#8b94a6] text-sm mb-4">
+                    {isLk
+                      ? 'Google Drive, Mega, Pixeldrain, සහ YTS වෙතින් සෘජු බාගත කිරීමේ සබැඳි.'
+                      : 'High-speed direct file downloads from Google Drive, Mega, Pixeldrain, and direct CDNs.'}
+                  </p>
+                  <div className="flex flex-col sm:flex-row items-stretch gap-3 max-w-xl relative z-30 focus-within:z-50">
+                    <DownloadButton
+                      movieId={movie?.id || movie?.title}
+                      title={movie?.title}
+                      downloadLinks={directLinks}
+                      movie={movie}
+                      label={isLk ? 'Download File (DDL) | සෘජු බාගත කිරීම' : 'Download File (DDL)'}
+                      className="w-full sm:w-auto flex-1 bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-bold hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:-translate-y-0.5"
+                    />
+                    {movie?.torrents?.[0]?.url && (
+                      <DirectStreamButton
+                        movieId={movie?.id || movie?.title}
+                        title={movie?.title}
+                        magnetLink={movie?.torrents?.[0]?.url}
+                        label={isLk ? 'Direct Download | සෘජු බාගත කිරීම' : 'Direct Download'}
+                        className="w-full sm:w-auto flex-1"
+                      />
+                    )}
+                  </div>
                 </div>
-                <p className="text-[#8b94a6] text-sm mb-4">
-                  {isLk
-                    ? 'ඉහළ වේගයකින් යුත් සෘජු බාගත කිරීම් (Google Drive, Mega, Pixeldrain) සහ බ්‍රවුසරය හරහා ක්ෂණික බාගත කිරීම.'
-                    : 'High-speed cloud direct file downloads (Google Drive, Mega, Pixeldrain) and instant browser stream.'}
-                </p>
-                <div className="flex flex-col sm:flex-row items-stretch gap-3 max-w-xl relative z-30 focus-within:z-50">
-                  <DownloadButton
-                    movieId={movie?.id || movie?.title}
-                    title={movie?.title}
-                    magnetLink={movie?.torrents?.[0]?.url || movie?.magnetLink}
-                    downloadLinks={directLinks}
-                    movie={movie}
-                    label={isLk ? 'Download Options | බාගත විකල්ප' : 'Download Options (DDL)'}
-                    className="w-full sm:w-auto flex-1 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-extrabold hover:shadow-[0_0_20px_rgba(245,158,11,0.4)] hover:-translate-y-0.5"
-                  />
-                  <DirectStreamButton
-                    movieId={movie?.id || movie?.title}
-                    title={movie?.title}
-                    magnetLink={movie?.torrents?.[0]?.url || movie?.magnetLink}
-                    label={isLk ? 'Direct Download | සෘජු බාගත කිරීම' : 'Direct Download'}
-                    className="w-full sm:w-auto flex-1"
-                  />
-                </div>
-              </div>
+              )}
 
               {/* 2. Automated Multi-Quality Telegram Downloads (480p, 720p, 1080p, 4K) */}
               {hasTelegramFiles && (
@@ -770,7 +771,7 @@ const SingleMovie = () => {
               ) : (
                 <div className="glass-card rounded-xl p-8 text-center">
                   <AlertCircle className="w-16 h-16 text-[#8b94a6] mx-auto mb-4" />
-                  <h4 className="text-xl font-bold text-white mb-2">Links not available right now</h4>
+                  <h4 className="text-xl font-bold text-white mb-2">{isLk ? 'බාගත කිරීම් දැනට නොමැත' : 'No downloads available'}</h4>
                   {isLk && <h5 className="text-lg font-bold text-[#8b94a6] mb-4">දැනට බාගත කිරීමේ පහසුකම් නොමැත</h5>}
                   <p className="text-[#8b94a6] mb-6">
                     Please check back later or search manually.
