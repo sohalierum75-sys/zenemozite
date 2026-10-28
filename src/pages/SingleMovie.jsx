@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, Search, MessageSquare, Sparkles, Server } from 'lucide-react';
 import ReportBrokenLink from '../components/ReportBrokenLink';
 import DownloadButton from '../components/DownloadButton';
+import TelegramQualityDownloads from '../components/TelegramQualityDownloads';
 import { useLocale } from '../context/LocaleContext';
 
 import { API_BASE_URL, buildDownloadUrl } from '../config/api';
@@ -626,88 +627,14 @@ const SingleMovie = () => {
                 </div>
               )}
 
-              {/* Dynamic Telegram Quality Download Buttons (1080p, 720p, 480p) */}
+              {/* Automated Multi-Quality Telegram Downloads (480p, 720p, 1080p, 4K) */}
               {hasTelegramFiles ? (
-                <div className="glass-card rounded-2xl p-6 mb-6 border border-white/10 bg-gradient-to-br from-purple-900/20 via-black/40 to-black/60 shadow-2xl relative z-10">
-                  <div className="flex items-center justify-between flex-wrap gap-3 pb-4 mb-5 border-b border-white/10">
-                    <div className="flex items-center space-x-3">
-                      <div className="p-2.5 rounded-xl bg-gradient-to-tr from-[#7928ca] to-[#ff0080] text-white shadow-lg shadow-purple-500/30">
-                        <Download className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <h3 className="text-xl font-extrabold text-white tracking-tight flex items-center gap-2">
-                          <span>Telegram Direct Downloads</span>
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">
-                            Zero-RAM CDN
-                          </span>
-                        </h3>
-                        <p className="text-xs text-[#8b94a6] mt-0.5">
-                          High-speed direct browser downloads via Telegram streaming
-                        </p>
-                      </div>
-                    </div>
-                    <span className="text-xs font-semibold px-3 py-1 rounded-full bg-white/10 text-white/90 border border-white/15">
-                      {telegramFiles.length} {telegramFiles.length === 1 ? 'Quality' : 'Qualities'} Available
-                    </span>
-                  </div>
-
-                  {/* Dynamically Rendered Buttons for each quality */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {telegramFiles.map((file, idx) => {
-                      const quality = file.quality || '1080p';
-                      const size = file.size || 'Unknown';
-                      const style = getQualityStyle(quality);
-                      const isDownloading = downloadingFileId === file.file_id;
-                      const downloadUrl = buildDownloadUrl(file.file_id, movie?.title);
-
-                      return (
-                        <div
-                          key={file.file_id || `tg-${idx}`}
-                          className="flex flex-col rounded-xl border border-white/10 bg-black/40 backdrop-blur-md p-4 transition-all duration-300 hover:border-white/20 hover:-translate-y-1 hover:shadow-xl group"
-                        >
-                          <div className="flex items-center justify-between mb-3">
-                            <span className={`text-xs font-bold px-2.5 py-1 rounded-lg border ${style.badge}`}>
-                              {style.label}
-                            </span>
-                            {size && size !== 'Unknown' && (
-                              <span className="text-xs font-medium text-[#8b94a6] bg-white/5 px-2 py-0.5 rounded">
-                                {size}
-                              </span>
-                            )}
-                          </div>
-
-                          <p className="text-xs text-[#8b94a6] mb-4 flex-1">
-                            Direct high-speed browser download via Telegram stream
-                          </p>
-
-                          <a
-                            href={downloadUrl}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              handleTelegramDownload(file);
-                            }}
-                            className={`w-full font-bold py-3 px-4 rounded-xl transition-all duration-300 flex items-center justify-center space-x-2 text-white shadow-md active:scale-95 bg-gradient-to-r ${style.gradient} ${style.shadow} cursor-pointer`}
-                            title={`Download ${quality} (${size})`}
-                          >
-                            {isDownloading ? (
-                              <>
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                                <span className="text-sm">Connecting Download...</span>
-                              </>
-                            ) : (
-                              <>
-                                <Download className="w-4 h-4 transition-transform group-hover:translate-y-0.5" />
-                                <span className="text-sm font-semibold">
-                                  {isLk ? `${quality} බාගත කරන්න` : `Download ${quality}`}
-                                </span>
-                              </>
-                            )}
-                          </a>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                <TelegramQualityDownloads
+                  movie={movie}
+                  files={telegramFiles}
+                  isLk={isLk}
+                  className="mb-6"
+                />
               ) : (
                 <div className="glass-card rounded-xl p-5 text-center mb-6 border border-white/5 bg-white/[0.02]">
                   <div className="flex items-center justify-center space-x-2 mb-1.5">

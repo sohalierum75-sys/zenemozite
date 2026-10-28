@@ -8,6 +8,7 @@ import TVShows from './pages/TVShows';
 import SingleMovie from './pages/SingleMovie';
 import SingleTV from './pages/SingleTV';
 import SearchResults from './pages/SearchResults';
+import AdminDashboard from './pages/AdminDashboard';
 import { LocaleProvider } from './context/LocaleContext';
 
 function App() {
@@ -42,6 +43,7 @@ function App() {
               <Route path="/movie/:id" element={<SingleMovie />} />
               <Route path="/tv/:id" element={<SingleTV />} />
               <Route path="/search/:query" element={<SearchResults />} />
+              <Route path="/admin" element={<AdminDashboard />} />
             </Routes>
           </main>
           <Footer />

@@ -75,6 +75,13 @@ model Movie {
   chunks           MovieChunk[]
   downloadLinks    DownloadLink[]
 
+  variants         MovieFileVariant[]
+  imports          TelegramImport[]
+  rights           MovieRight[]
+  downloads        MovieDownload[]
+  isPublished      Boolean      @default(true)
+  normalizedTitle  String?
+
   // --- TMDB metadata (auto-saved when movie lists are fetched & cached) ---
   tmdbId           Int?         // TMDB movie ID — unique key for upsert
   posterPath       String?      // TMDB poster path (for frontend display)
@@ -88,6 +95,7 @@ model Movie {
   @@index([status])
   @@index([lastDownloadedAt])
   @@index([popularity])
+  @@index([normalizedTitle])
 }
 
 model MovieChunk {
@@ -119,4 +127,141 @@ model DownloadLink {
 
   @@index([movieId])
   @@index([tmdbId])
+}
+
+// ==============================================================================
+// AUTOMATED TELEGRAM IMPORT & MULTI-QUALITY DOWNLOAD SYSTEM MODELS
+// ==============================================================================
+
+// Authorized Telegram Channels with rights verification
+model TelegramSource {
+  id             String   @id @default(uuid())
+  channelId      String   @unique  // e.g. "-1001234567890" or "@channelusername"
+  channelTitle   String
+  channelUsername String?
+  isAuthorized   Boolean  @default(true) // explicit administrative authorization
+  autoImport     Boolean  @default(true) // automatically process incoming files
+  autoPublish    Boolean  @default(true) // automatically publish verified movies
+  rightsStatus   String   @default("verified") // verified | pending | expired | revoked
+  licenseType    String?  @default("authorized_redistribution")
+  licenseNotes   String?
+  lastPostAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  imports        TelegramImport[]
+  rights         MovieRight[]
+
+  @@map("telegram_sources")
+  @@index([isAuthorized])
+  @@index([rightsStatus])
+}
+
+// Telegram Channel Message Import Log & Queue
+model TelegramImport {
+  id                 String          @id @default(uuid())
+  sourceChannelId    String
+  source             TelegramSource? @relation(fields: [sourceChannelId], references: [channelId], onDelete: Cascade)
+  messageId          Int
+  updateId           Int?
+  fileId             String
+  fileUniqueId       String?
+  fileName           String?
+  fileSizeBytes      Float?
+  mimeType           String?
+  caption            String?
+  parsedTitle        String?
+  parsedYear         String?
+  parsedQuality      String?         // 480p | 720p | 1080p | 4K
+  codec              String?
+  audioLang          String?
+  resolutionVerified Boolean         @default(false)
+  status             String          @default("pending") // pending | processing | verified | published | requires_review | failed | rights_expired
+  errorMessage       String?
+  retryCount         Int             @default(0)
+  movieId            String?
+  movie              Movie?          @relation(fields: [movieId], references: [id], onDelete: SetNull)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  @@unique([sourceChannelId, messageId])
+  @@index([fileUniqueId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("telegram_imports")
+}
+
+// Multi-Quality File Variants attached to Movies (480p, 720p, 1080p, 4K)
+model MovieFileVariant {
+  id                   String          @id @default(uuid())
+  movieId              String
+  movie                Movie           @relation(fields: [movieId], references: [id], onDelete: Cascade)
+  quality              String          // "480p" | "720p" | "1080p" | "4K"
+  telegramFileId       String          // Telegram Local Bot API file_id
+  telegramFileUniqueId String?
+  telegramMessageId    Int?
+  sourceChannelId      String?
+  fileName             String
+  fileSizeBytes        Float?
+  fileSizeFormatted    String?         // e.g. "1.2 GB"
+  mimeType             String?         @default("video/mp4")
+  width                Int?
+  height               Int?
+  codec                String?         // e.g. "h264", "hevc"
+  audioLanguage        String?         // e.g. "English", "Tamil"
+  subtitleInfo         String?
+  verifiedResolution   Boolean         @default(false)
+  isAvailable          Boolean         @default(true)
+  downloadCount        Int             @default(0)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  downloads            MovieDownload[]
+
+  @@unique([movieId, quality])
+  @@index([telegramFileId])
+  @@index([movieId])
+  @@index([quality])
+  @@map("movie_file_variants")
+}
+
+// Distribution rights and license compliance tracking
+model MovieRight {
+  id                 String          @id @default(uuid())
+  movieId            String?
+  movie              Movie?          @relation(fields: [movieId], references: [id], onDelete: Cascade)
+  sourceChannelId    String?
+  source             TelegramSource? @relation(fields: [sourceChannelId], references: [channelId], onDelete: SetNull)
+  licenseType        String          @default("authorized_redistribution")
+  rightsGrantedBy    String?
+  verificationStatus String          @default("verified") // verified | pending | rejected | expired
+  validFrom          DateTime        @default(now())
+  validUntil         DateTime?
+  licenseDocumentUrl String?
+  notes              String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  @@index([verificationStatus])
+  @@index([movieId])
+  @@map("movie_rights")
+}
+
+// Download request logging and analytics
+model MovieDownload {
+  id              String            @id @default(uuid())
+  variantId       String?
+  variant         MovieFileVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  movieId         String?
+  movie           Movie?            @relation(fields: [movieId], references: [id], onDelete: SetNull)
+  quality         String
+  ipAddress       String?
+  userAgent       String?
+  bytesDownloaded Float             @default(0)
+  completed       Boolean           @default(false)
+  downloadedAt    DateTime          @default(now())
+
+  @@index([downloadedAt])
+  @@index([movieId])
+  @@map("movie_downloads")
 }

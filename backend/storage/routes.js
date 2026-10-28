@@ -23,6 +23,11 @@ import { createChunkStream, buildPartFileName } from './chunker.js';
 import { formatBytes } from './config.js';
 import { resolveTelegramMedia, streamMediaToResponse } from './userbot.js';
 import { streamTorrentFile } from './torrentStream.js';
+import {
+  generateSignedDownloadToken,
+  verifySignedDownloadToken,
+  handleDirectStreaming,
+} from '../services/downloadService.js';
 
 const router = express.Router();
 
@@ -498,9 +503,43 @@ export const handleStream = handleDownload;
 router.get('/stream/:file_id', handleDownload);
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // Standalone routers: mounted at /api/download and /api/stream in server.js
 // ---------------------------------------------------------------------------
 const downloadRouter = express.Router();
+
+// 1. Generate cryptographically signed download URL
+downloadRouter.get('/token/:targetId', (req, res) => {
+  try {
+    const { targetId } = req.params;
+    const { quality, ttl } = req.query;
+    const ttlSeconds = parseInt(ttl, 10) || 86400;
+    const result = generateSignedDownloadToken({
+      variantId: targetId,
+      quality: quality || '1080p',
+      ttlSeconds,
+    });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 2. Direct streaming with signed token verification & range requests
+downloadRouter.get('/direct', async (req, res) => {
+  const { token, quality } = req.query;
+  const verified = verifySignedDownloadToken(token);
+  if (!verified.valid) {
+    return res.status(401).json({ success: false, error: verified.error });
+  }
+  return handleDirectStreaming({
+    req,
+    res,
+    targetId: verified.targetId,
+    requestedQuality: verified.quality || quality,
+  });
+});
+
 downloadRouter.get('/:file_id', handleDownload);
 downloadRouter.get('/:idOrTitle', handleDownload);
 

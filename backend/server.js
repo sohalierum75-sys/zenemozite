@@ -9,6 +9,7 @@ import { startWorker } from './storage/worker.js';
 import adminRouter, { getDownloadLinksForMovie } from './adminRoutes.js';
 import { parseTelegramFiles } from './storage/telegramParser.js';
 import { startMovieCron } from './cron/movieSync.js';
+import telegramWebhookRouter from './routes/telegramWebhookRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -368,6 +369,8 @@ app.use('/api/download', downloadRouter);
 app.use('/api/stream', streamRouter);
 // Admin routes for managing movies and direct download links (DDL)
 app.use('/api/admin', adminRouter);
+// Telegram Webhook and automated import endpoints
+app.use('/api/telegram', telegramWebhookRouter);
 
 /**
  * GET /api/sync-now

@@ -1,6 +1,14 @@
 import express from 'express';
 import prisma from './prisma/client.js';
 import { parseTelegramFiles, parseTelegramFileMetadata } from './storage/telegramParser.js';
+import {
+  verifyChannelAccess,
+  retryImport,
+  removeMovieVariant,
+  registerWebhook,
+  getWebhookInfo,
+  manualImport,
+} from './services/telegramImportService.js';
 
 const router = express.Router();
 
@@ -770,6 +778,469 @@ router.post('/automation/sync', async (req, res) => {
     });
   } catch (err) {
     console.error('[ADMIN] Error triggering automation sync:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==============================================================================
+// TELEGRAM CHANNELS & AUTOMATED IMPORT MANAGEMENT
+// ==============================================================================
+
+/**
+ * GET /api/admin/channels
+ * List all registered Telegram channels with stats and rights status
+ */
+router.get('/channels', async (req, res) => {
+  try {
+    const channels = await prisma.telegramSource.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        _count: {
+          select: { imports: true },
+        },
+      },
+    });
+
+    res.json({ success: true, data: channels });
+  } catch (err) {
+    console.error('[ADMIN] Error listing telegram channels:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/admin/channels
+ * Register a new authorized Telegram channel
+ */
+router.post('/channels', async (req, res) => {
+  try {
+    const {
+      channelId,
+      channelTitle,
+      channelUsername,
+      autoImport = true,
+      autoPublish = true,
+      rightsStatus = 'verified',
+      licenseType = 'authorized_redistribution',
+      licenseNotes,
+    } = req.body;
+
+    if (!channelId) {
+      return res.status(400).json({ success: false, message: 'channelId is required' });
+    }
+
+    const cleanChannelId = String(channelId).trim();
+
+    // Verify channel access via Telegram Bot API
+    let verifiedTitle = channelTitle;
+    let verifiedUsername = channelUsername;
+    const check = await verifyChannelAccess(cleanChannelId);
+    if (check.ok) {
+      if (!verifiedTitle && check.title) verifiedTitle = check.title;
+      if (!verifiedUsername && check.username) verifiedUsername = check.username;
+    }
+
+    const source = await prisma.telegramSource.upsert({
+      where: { channelId: cleanChannelId },
+      update: {
+        channelTitle: verifiedTitle || cleanChannelId,
+        channelUsername: verifiedUsername || undefined,
+        isAuthorized: true,
+        autoImport: Boolean(autoImport),
+        autoPublish: Boolean(autoPublish),
+        rightsStatus,
+        licenseType,
+        licenseNotes,
+      },
+      create: {
+        channelId: cleanChannelId,
+        channelTitle: verifiedTitle || cleanChannelId,
+        channelUsername: verifiedUsername || null,
+        isAuthorized: true,
+        autoImport: Boolean(autoImport),
+        autoPublish: Boolean(autoPublish),
+        rightsStatus,
+        licenseType,
+        licenseNotes,
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Channel authorized successfully',
+      data: source,
+      telegramCheck: check,
+    });
+  } catch (err) {
+    console.error('[ADMIN] Error saving channel:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * PUT /api/admin/channels/:id
+ * Update channel settings (auto-import, auto-publish, rights status, etc.)
+ */
+router.put('/channels/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      channelTitle,
+      isAuthorized,
+      autoImport,
+      autoPublish,
+      rightsStatus,
+      licenseType,
+      licenseNotes,
+    } = req.body;
+
+    const updated = await prisma.telegramSource.update({
+      where: { id },
+      data: {
+        ...(channelTitle !== undefined ? { channelTitle } : {}),
+        ...(isAuthorized !== undefined ? { isAuthorized: Boolean(isAuthorized) } : {}),
+        ...(autoImport !== undefined ? { autoImport: Boolean(autoImport) } : {}),
+        ...(autoPublish !== undefined ? { autoPublish: Boolean(autoPublish) } : {}),
+        ...(rightsStatus !== undefined ? { rightsStatus } : {}),
+        ...(licenseType !== undefined ? { licenseType } : {}),
+        ...(licenseNotes !== undefined ? { licenseNotes } : {}),
+      },
+    });
+
+    res.json({ success: true, message: 'Channel updated successfully', data: updated });
+  } catch (err) {
+    console.error('[ADMIN] Error updating channel:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/admin/channels/:id
+ * Revoke or remove an authorized channel
+ */
+router.delete('/channels/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await prisma.telegramSource.delete({
+      where: { id },
+    });
+    res.json({ success: true, message: 'Channel deleted successfully' });
+  } catch (err) {
+    console.error('[ADMIN] Error deleting channel:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/admin/channels/:id/verify
+ * Re-verify bot access to an authorized channel
+ */
+router.post('/channels/:id/verify', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const source = await prisma.telegramSource.findUnique({ where: { id } });
+    if (!source) {
+      return res.status(404).json({ success: false, message: 'Channel not found' });
+    }
+
+    const check = await verifyChannelAccess(source.channelId);
+    res.json({ success: true, data: check });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==============================================================================
+// IMPORT QUEUE & JOBS
+// ==============================================================================
+
+/**
+ * GET /api/admin/imports
+ * List import jobs with optional status filter
+ */
+router.get('/imports', async (req, res) => {
+  try {
+    const { status, limit = 50, page = 1 } = req.query;
+    const take = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
+    const skip = (Math.max(parseInt(page, 10) || 1, 1) - 1) * take;
+
+    const where = status ? { status: String(status).trim() } : {};
+
+    const [imports, total] = await Promise.all([
+      prisma.telegramImport.findMany({
+        where,
+        take,
+        skip,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          source: true,
+          movie: {
+            select: { id: true, title: true, posterPath: true, releaseDate: true, status: true },
+          },
+        },
+      }),
+      prisma.telegramImport.count({ where }),
+    ]);
+
+    res.json({
+      success: true,
+      data: imports,
+      pagination: {
+        total,
+        page: parseInt(page, 10) || 1,
+        limit: take,
+        pages: Math.ceil(total / take),
+      },
+    });
+  } catch (err) {
+    console.error('[ADMIN] Error listing imports:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/admin/imports/:id/retry
+ * Retry a failed or rejected import job
+ */
+router.post('/imports/:id/retry', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await retryImport(id);
+    res.json({ success: result.success, data: result });
+  } catch (err) {
+    console.error('[ADMIN] Error retrying import:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/admin/imports/:id/publish
+ * Approve and publish a movie in 'requires_review' or 'pending' state
+ */
+router.post('/imports/:id/publish', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const importJob = await prisma.telegramImport.findUnique({
+      where: { id },
+      include: { movie: true },
+    });
+
+    if (!importJob) {
+      return res.status(404).json({ success: false, message: 'Import job not found' });
+    }
+
+    if (importJob.movieId) {
+      await prisma.movie.update({
+        where: { id: importJob.movieId },
+        data: {
+          status: 'ready',
+          isPublished: true,
+        },
+      });
+    }
+
+    const updated = await prisma.telegramImport.update({
+      where: { id },
+      data: { status: 'published' },
+    });
+
+    res.json({
+      success: true,
+      message: 'Movie approved and published successfully',
+      data: updated,
+    });
+  } catch (err) {
+    console.error('[ADMIN] Error publishing import:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/admin/imports/:id/reject
+ * Reject an import job
+ */
+router.post('/imports/:id/reject', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updated = await prisma.telegramImport.update({
+      where: { id },
+      data: {
+        status: 'failed',
+        errorMessage: 'Rejected by administrator during manual review',
+      },
+    });
+    res.json({ success: true, message: 'Import rejected', data: updated });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==============================================================================
+// MOVIE QUALITY VARIANTS & RIGHTS MANAGEMENT
+// ==============================================================================
+
+/**
+ * GET /api/admin/movies/:id/variants
+ * Get all available quality variants for a movie (480p, 720p, 1080p, 4K)
+ */
+router.get('/movies/:id/variants', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const variants = await prisma.movieFileVariant.findMany({
+      where: { movieId: id },
+      orderBy: { quality: 'desc' },
+    });
+
+    res.json({ success: true, data: variants });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/admin/variants/:id
+ * Remove a specific quality variant
+ */
+router.delete('/variants/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await removeMovieVariant(id);
+    res.json({ success: true, message: 'Variant removed successfully', data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * PUT /api/admin/movies/:id/rights
+ * Update movie distribution rights and licensing compliance
+ */
+router.put('/movies/:id/rights', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      verificationStatus = 'verified',
+      licenseType = 'authorized_redistribution',
+      rightsGrantedBy,
+      notes,
+    } = req.body;
+
+    const right = await prisma.movieRight.create({
+      data: {
+        movieId: id,
+        verificationStatus,
+        licenseType,
+        rightsGrantedBy,
+        notes,
+      },
+    });
+
+    res.json({ success: true, message: 'Rights updated successfully', data: right });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * PUT /api/admin/movies/:id/toggle-publish
+ * Toggle public visibility of a movie
+ */
+router.put('/movies/:id/toggle-publish', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const movie = await prisma.movie.findUnique({ where: { id } });
+    if (!movie) {
+      return res.status(404).json({ success: false, message: 'Movie not found' });
+    }
+
+    const updated = await prisma.movie.update({
+      where: { id },
+      data: {
+        isPublished: !movie.isPublished,
+        status: !movie.isPublished ? 'ready' : 'pending',
+      },
+    });
+
+    res.json({
+      success: true,
+      message: `Movie is now ${updated.isPublished ? 'Published' : 'Unpublished'}`,
+      data: updated,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==============================================================================
+// TELEGRAM AUTOMATION & DOWNLOAD ANALYTICS
+// ==============================================================================
+
+/**
+ * GET /api/admin/analytics
+ * Comprehensive dashboard overview stats
+ */
+router.get('/analytics', async (req, res) => {
+  try {
+    const [
+      channelCount,
+      importStats,
+      totalMovies,
+      variants,
+      totalDownloads,
+      recentImports,
+    ] = await Promise.all([
+      prisma.telegramSource.count(),
+      prisma.telegramImport.groupBy({
+        by: ['status'],
+        _count: { id: true },
+      }),
+      prisma.movie.count(),
+      prisma.movieFileVariant.groupBy({
+        by: ['quality'],
+        _count: { id: true },
+      }),
+      prisma.movieDownload.count(),
+      prisma.telegramImport.findMany({
+        take: 10,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          source: { select: { channelTitle: true } },
+          movie: { select: { title: true } },
+        },
+      }),
+    ]);
+
+    const importStatusMap = {};
+    for (const item of importStats) {
+      importStatusMap[item.status] = item._count.id;
+    }
+
+    const qualityMap = {};
+    for (const item of variants) {
+      qualityMap[item.quality] = item._count.id;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        overview: {
+          channels: channelCount,
+          movies: totalMovies,
+          totalDownloads,
+          imports: {
+            published: importStatusMap['published'] || 0,
+            requires_review: importStatusMap['requires_review'] || 0,
+            pending: importStatusMap['pending'] || 0,
+            processing: importStatusMap['processing'] || 0,
+            failed: importStatusMap['failed'] || 0,
+          },
+          qualities: qualityMap,
+        },
+        recentImports,
+      },
+    });
+  } catch (err) {
+    console.error('[ADMIN] Error fetching analytics:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });

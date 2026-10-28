@@ -34,6 +34,14 @@ services:
       - CDN_MAX_CONCURRENT=${CDN_MAX_CONCURRENT:-1}
       # Shared volume with telegram-api -> enables zero-RAM file:// uploads
       - TELEGRAM_SHARED_DIR=${TELEGRAM_SHARED_DIR:-/app/shared}
+      # Telegram Webhook secret token for authenticating channel_post updates
+      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-zinemo_telegram_sec_token_2026}
+      # Cryptographic HMAC signing secret for secure direct download links
+      - DOWNLOAD_SIGNING_SECRET=${DOWNLOAD_SIGNING_SECRET:-zinemo_download_secure_signing_secret_2026}
+      # Concurrency limit per client IP for direct streaming downloads
+      - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-4}
+      # Optional Nginx internal file offloading
+      - USE_X_ACCEL_REDIRECT=${USE_X_ACCEL_REDIRECT:-false}
     volumes:
       # Persist SQLite database across container restarts
       - zenemozite-data:/app/data
