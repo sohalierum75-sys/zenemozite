@@ -93,6 +93,7 @@ COPY --from=backend-builder --chown=nodejs:nodejs /app/backend/node_modules ./ba
 #       image; runtime DATABASE_URL always points at /app/data/zenemozite.db (volume).
 COPY --chown=nodejs:nodejs backend/*.js ./backend/
 COPY --chown=nodejs:nodejs backend/cron ./backend/cron/
+COPY --chown=nodejs:nodejs backend/routes ./backend/routes/
 COPY --chown=nodejs:nodejs backend/services ./backend/services/
 COPY --chown=nodejs:nodejs backend/storage ./backend/storage/
 COPY --chown=nodejs:nodejs backend/prisma/schema.prisma backend/prisma/client.js ./backend/prisma/
@@ -109,6 +110,17 @@ COPY --from=frontend-builder --chown=nodejs:nodejs /app/dist ./frontend/dist
 # copy (node_modules is copied wholesale, so the binary travels with it) and
 # actually loads in the runtime image (Debian glibc, Node 22):
 RUN node -e "require('/app/backend/node_modules/node-datachannel'); console.log('node-datachannel loads in runtime image')"
+
+# Verify all backend imports and entrypoint syntax resolve successfully at build time
+RUN node --check /app/backend/server.js \
+    && node -e "Promise.all([ \
+         import('/app/backend/routes/telegramWebhookRoutes.js'), \
+         import('/app/backend/services/telegramImportService.js'), \
+         import('/app/backend/services/downloadService.js'), \
+         import('/app/backend/services/movieDetector.js'), \
+         import('/app/backend/adminRoutes.js'), \
+         import('/app/backend/storage/routes.js') \
+       ]).then(() => console.log('✅ All backend routes and modules verified in production image'))"
 
 # Create directories for SQLite database and the shared torrent/upload volume
 # (named volumes inherit ownership from these image dirs on first mount, so

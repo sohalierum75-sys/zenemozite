@@ -368,9 +368,22 @@ app.use('/api/download', downloadRouter);
 // Direct GramJS MTProto Userbot streaming & Range request endpoint (GET /api/stream/:file_id)
 app.use('/api/stream', streamRouter);
 // Admin routes for managing movies and direct download links (DDL)
-app.use('/api/admin', adminRouter);
-// Telegram Webhook and automated import endpoints
-app.use('/api/telegram', telegramWebhookRouter);
+if (adminRouter) {
+  try {
+    app.use('/api/admin', adminRouter);
+  } catch (adminErr) {
+    console.error('[SERVER] Failed mounting /api/admin router:', adminErr.message);
+  }
+}
+
+// Telegram Webhook and automated import endpoints (guarded so missing Telegram config never breaks Express)
+if (telegramWebhookRouter) {
+  try {
+    app.use('/api/telegram', telegramWebhookRouter);
+  } catch (tgRouteErr) {
+    console.error('[SERVER] Failed mounting /api/telegram router (server continues):', tgRouteErr.message);
+  }
+}
 
 /**
  * GET /api/sync-now

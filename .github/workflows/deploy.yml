@@ -122,6 +122,10 @@ jobs:
                   - CDN_MAX_CONCURRENT=${CDN_MAX_CONCURRENT:-1}
                   # Shared volume with telegram-api -> enables zero-RAM file:// uploads
                   - TELEGRAM_SHARED_DIR=${TELEGRAM_SHARED_DIR:-/app/shared}
+                  - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-zinemo_telegram_sec_token_2026}
+                  - DOWNLOAD_SIGNING_SECRET=${DOWNLOAD_SIGNING_SECRET:-zinemo_download_secure_signing_secret_2026}
+                  - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-4}
+                  - USE_X_ACCEL_REDIRECT=${USE_X_ACCEL_REDIRECT:-false}
                 
                 volumes:
                   - zenemozite-data:/app/data
@@ -190,6 +194,8 @@ jobs:
             grep -q '^TELEGRAM_API_ID=' .env || echo 'TELEGRAM_API_ID=23271365' >> .env
             grep -q '^TELEGRAM_API_HASH=' .env || echo 'TELEGRAM_API_HASH=59a8393f1c17083798b42333d16ff224' >> .env
             grep -q '^TELEGRAM_LOCAL_API_URL=' .env || echo 'TELEGRAM_LOCAL_API_URL=http://telegram-api:8081' >> .env
+            grep -q '^TELEGRAM_WEBHOOK_SECRET=' .env || echo 'TELEGRAM_WEBHOOK_SECRET=zinemo_telegram_sec_token_2026' >> .env
+            grep -q '^DOWNLOAD_SIGNING_SECRET=' .env || echo 'DOWNLOAD_SIGNING_SECRET=zinemo_download_secure_signing_secret_2026' >> .env
             
             # Load environment variables from .env if it exists
             if [ -f .env ]; then
