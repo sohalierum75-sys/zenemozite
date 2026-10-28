@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, Search, MessageSquare, Sparkles } from 'lucide-react';
+import { Play, Download, Star, Clock, Calendar, ChevronLeft, Loader2, AlertCircle, ExternalLink, Video, X, Search, MessageSquare, Sparkles, Server } from 'lucide-react';
 import ReportBrokenLink from '../components/ReportBrokenLink';
 import DownloadButton from '../components/DownloadButton';
 import DirectStreamButton from '../components/DirectStreamButton';
@@ -130,9 +130,31 @@ const SingleMovie = () => {
         movieData.download_links = linksArray;
         movieData.downloadLinks = linksArray;
 
+        // Normalize telegram_files and telegramFiles to ensure populated arrays
+        const rawTg =
+          movieData.telegram_files ||
+          movieData.telegramFiles ||
+          movieData.data?.telegram_files ||
+          movieData.data?.telegramFiles ||
+          result?.data?.telegram_files ||
+          result?.data?.telegramFiles ||
+          [];
+
+        let tgArray = [];
+        if (Array.isArray(rawTg)) {
+          tgArray = rawTg;
+        } else if (typeof rawTg === 'string') {
+          try {
+            const parsed = JSON.parse(rawTg);
+            if (Array.isArray(parsed)) tgArray = parsed;
+          } catch { }
+        }
+        movieData.telegram_files = tgArray;
+        movieData.telegramFiles = tgArray;
+
         setMovie(movieData);
         setError(null);
-        console.log('[MOVIE] Successfully set movie:', movieData.title, 'links count:', linksArray.length);
+        console.log('[MOVIE] Successfully set movie:', movieData.title, 'links:', linksArray.length, 'tg_files:', tgArray.length);
       } else {
         console.error('[MOVIE] Invalid movie data:', movieData);
         setError('Movie not found');
@@ -687,11 +709,112 @@ const SingleMovie = () => {
                     })}
                   </div>
                 </div>
-              ) : hasDirectLinks ? null : (
-                <div className="glass-card rounded-xl p-8 text-center mb-6">
-                  <AlertCircle className="w-16 h-16 text-[#8b94a6] mx-auto mb-4" />
-                  <h4 className="text-xl font-bold text-white mb-2">Telegram downloads being processed</h4>
-                  <p className="text-[#8b94a6] text-sm">Download links in 1080p, 720p, and 480p will appear once synced.</p>
+              ) : (
+                <div className="glass-card rounded-xl p-5 text-center mb-6 border border-white/5 bg-white/[0.02]">
+                  <div className="flex items-center justify-center space-x-2 mb-1.5">
+                    <AlertCircle className="w-5 h-5 text-amber-400" />
+                    <h4 className="text-base font-bold text-white">Telegram downloads being processed</h4>
+                  </div>
+                  <p className="text-[#8b94a6] text-xs">Download links in 1080p, 720p, and 480p will appear once synced.</p>
+                </div>
+              )}
+
+              {/* Webtor & Torrent Streaming / Download Section (Side-by-Side with Telegram) */}
+              {hasTorrents && (
+                <div className="glass-card rounded-2xl p-6 mb-6 border border-amber-500/20 bg-gradient-to-br from-amber-500/5 via-black/40 to-black/60 shadow-xl relative z-10">
+                  <div className="flex items-center justify-between flex-wrap gap-3 pb-4 mb-5 border-b border-white/10">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2.5 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-600 text-white shadow-lg shadow-orange-500/20">
+                        <Server className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-extrabold text-white tracking-tight flex items-center gap-2">
+                          <span>Webtor.io Torrent Streaming & Downloads</span>
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30 font-semibold">
+                            P2P & Webtor
+                          </span>
+                        </h3>
+                        <p className="text-xs text-[#8b94a6] mt-0.5">
+                          Stream instantly online via Webtor or download torrent/magnet files
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-xs font-semibold px-3 py-1 rounded-full bg-white/10 text-white/90 border border-white/15">
+                      {(movie?.torrents || []).length} {(movie?.torrents || []).length === 1 ? 'Source' : 'Sources'} Available
+                    </span>
+                  </div>
+
+                  {/* Torrents with Webtor Integration */}
+                  <div className="space-y-4">
+                    {movie?.torrents?.map((torrent, index) => {
+                      if (!torrent || !torrent.url) return null;
+                      const webtorStreamUrl = `https://webtor.io/${torrent.url}`;
+
+                      return (
+                        <div key={`torrent-${index}-${torrent.quality || index}`} className="rounded-xl border border-white/10 bg-black/40 backdrop-blur-md p-4 transition-all duration-300 hover:border-white/20">
+                          {/* Quality Header with Provider Badge */}
+                          <div className="mb-3 flex items-center justify-between flex-wrap gap-2">
+                            <h4 className="text-white font-bold text-base flex items-center gap-2">
+                              <span>Source {index + 1}: {torrent.quality || 'Standard Quality'}</span>
+                              {torrent.size && (
+                                <span className="text-[#8b94a6] text-xs font-normal">
+                                  ({torrent.size})
+                                </span>
+                              )}
+                            </h4>
+                            <div className="flex items-center gap-2">
+                              {torrent.provider && (
+                                <span className="bg-[var(--accent)]/20 border border-[var(--accent)]/30 text-[var(--accent)] px-2.5 py-0.5 rounded-full text-xs font-bold">
+                                  {torrent.provider}
+                                </span>
+                              )}
+                              {torrent.seeders !== undefined && (
+                                <span className="text-emerald-400 text-xs bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full font-medium">
+                                  {torrent.seeders} seeders
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Action Buttons: Webtor stream, DownloadButton dropdown, DirectStreamButton */}
+                          <div className="mt-3 flex flex-col sm:flex-row items-stretch gap-3">
+                            {/* Webtor.io Instant Stream Button */}
+                            <a
+                              href={webtorStreamUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="sm:w-auto px-4 py-3 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white font-bold text-sm flex items-center justify-center space-x-2 shadow-lg shadow-orange-500/20 transition-all duration-300 hover:-translate-y-0.5 active:scale-95 cursor-pointer"
+                              title="Stream or download instantly using Webtor.io"
+                            >
+                              <Play className="w-4 h-4" />
+                              <span>Stream on Webtor</span>
+                              <ExternalLink className="w-3.5 h-3.5 opacity-80" />
+                            </a>
+
+                            {/* DownloadButton Dropdown with DDL and Webtor Fallback */}
+                            <DownloadButton
+                              movieId={movie?.title}
+                              title={movie?.title}
+                              magnetLink={torrent.url}
+                              downloadLinks={directLinks}
+                              movie={movie}
+                              label={isLk ? 'Download Options | බාගත විකල්ප' : 'Download Options'}
+                              className="flex-1 bg-[#ff9900] text-[#0f1115] hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] hover:-translate-y-0.5"
+                            />
+
+                            {/* Direct Stream / Download */}
+                            <DirectStreamButton
+                              movieId={movie?.title}
+                              title={movie?.title}
+                              magnetLink={torrent.url}
+                              label={isLk ? 'Direct Download | සෘජු බාගත කිරීම' : 'Direct Download'}
+                              className="w-full sm:w-auto flex-1"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 
@@ -711,7 +834,8 @@ const SingleMovie = () => {
                   <div className="mt-6 glass-card rounded-xl p-4">
                     <p className="text-[#8b94a6] text-sm leading-relaxed">
                       <strong className="text-white">Download Options:</strong><br />
-                      • Click any quality button (<strong className="text-[#6366f1]">1080p</strong>, <strong className="text-[#0ea5e9]">720p</strong>, or <strong className="text-[#f59e0b]">480p</strong>) to download the movie directly to your device via high-speed Telegram streaming (Zero-RAM).
+                      • <strong className="text-[#a855f7]">Telegram Direct:</strong> Click any quality button (<strong className="text-[#6366f1]">1080p</strong>, <strong className="text-[#0ea5e9]">720p</strong>, or <strong className="text-[#f59e0b]">480p</strong>) for instant high-speed browser downloads.<br />
+                      • <strong className="text-[#f97316]">Webtor.io & Torrents:</strong> Stream instantly online via Webtor or download torrent/magnet files using your favorite client.
                     </p>
                   </div>
                 </div>

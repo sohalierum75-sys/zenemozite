@@ -2410,6 +2410,25 @@ async function getTelegramFilesForMovie(movieId, title) {
       }));
     }
 
+    // Try userbot if connected
+    if (title) {
+      try {
+        const { fetchTelegramFilesForMovie } = await import('./storage/userbot.js');
+        const userbotFiles = await fetchTelegramFilesForMovie(title);
+        if (Array.isArray(userbotFiles) && userbotFiles.length > 0) {
+          if (movie?.id) {
+            prisma.movie.update({
+              where: { id: movie.id },
+              data: { telegram_files: JSON.stringify(userbotFiles) }
+            }).catch(() => {});
+          }
+          return userbotFiles;
+        }
+      } catch {
+        // userbot optional
+      }
+    }
+
     return [];
   } catch (err) {
     console.warn('[SERVER] Error fetching telegram files:', err.message);
@@ -2521,6 +2540,9 @@ app.get('/api/movies/:id', async (req, res) => {
         console.log(`[PRISMA] Database cache HIT for movie ${movieId} (${ageInHours.toFixed(1)}h old) - ${ddlLinks.length} links`);
         
         let telegramFiles = parseTelegramFiles(dbCached.telegram_files);
+        if (telegramFiles.length === 0 && movieWithLinks?.telegram_files) {
+          telegramFiles = parseTelegramFiles(movieWithLinks.telegram_files);
+        }
         if (telegramFiles.length === 0) {
           telegramFiles = await getTelegramFilesForMovie(movieId, dbCached.title);
         }
@@ -2686,13 +2708,14 @@ app.get('/api/movies/:id', async (req, res) => {
     // STEP 3.1: Query Prisma Movie table for this specific movieId (and tmdbId / title)
     // to explicitly merge any direct download links into the fresh response object
     let ddlLinks = [];
+    let dbMovie = null;
     const movieIdInt = parseInt(movieId, 10);
     const tmdbIdNum = Number.isInteger(movieData?.id) 
       ? movieData.id 
       : (Number.isInteger(movieIdInt) ? movieIdInt : null);
 
     try {
-      const dbMovie = await prisma.movie.findFirst({
+      dbMovie = await prisma.movie.findFirst({
         where: {
           OR: [
             { id: String(movieId) },
