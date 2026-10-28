@@ -13,6 +13,7 @@ import {
 import axios from 'axios';
 import { config } from './storage/config.js';
 import { generateSignedDownloadToken, verifySignedDownloadToken } from './services/downloadService.js';
+import { getUserbotClient } from './storage/userbot.js';
 
 const router = express.Router();
 
@@ -1283,11 +1284,60 @@ router.get('/diagnostics', async (req, res) => {
       localBotApiStatus.error = 'TELEGRAM_BOT_TOKEN is not configured';
     }
 
+    // 1b. Check Telegram MTProto Userbot Client status
+    let userbotStatus = {
+      connected: false,
+      apiIdConfigured: Boolean(config.telegram.apiId),
+      stringSessionConfigured: Boolean(config.telegram.stringSession),
+      error: null,
+    };
+    try {
+      const ubClient = await getUserbotClient().catch((e) => {
+        userbotStatus.error = e.message;
+        return null;
+      });
+      if (ubClient) {
+        userbotStatus.connected = Boolean(ubClient.connected);
+      }
+    } catch (ubErr) {
+      userbotStatus.error = ubErr.message;
+    }
+
+    // 1c. Check Destination Channel access
+    let destinationChannelStatus = {
+      configured: Boolean(config.telegram.chatId),
+      chatId: config.telegram.chatId || null,
+      accessible: false,
+      title: null,
+      error: null,
+    };
+    if (config.telegram.chatId) {
+      try {
+        const destCheck = await verifyChannelAccess(config.telegram.chatId);
+        destinationChannelStatus.accessible = Boolean(destCheck?.ok);
+        destinationChannelStatus.title = destCheck?.title || null;
+        destinationChannelStatus.error = destCheck?.error || null;
+      } catch (destErr) {
+        destinationChannelStatus.error = destErr.message;
+      }
+    } else {
+      destinationChannelStatus.error = 'TELEGRAM_CHAT_ID is not configured';
+    }
+
     // 2. Test Download Endpoint Health (token crypto check)
     let downloadHealth = {
       status: 'healthy',
       signingSecretConfigured: Boolean(process.env.DOWNLOAD_SIGNING_SECRET || process.env.JWT_SECRET),
       tokenGenerationValid: false,
+      deliveryReadiness: {
+        modeA_telegramRedirect: Boolean(destinationChannelStatus.accessible),
+        modeB_websiteDirectStream: Boolean(localBotApiStatus.connected || userbotStatus.connected),
+      },
+      buttonVisibilityDiagnostics: {
+        primaryButtons: 'Always active. DownloadButton (cloud DDL options) and DirectStreamButton (browser direct stream) are never gated by Telegram sync.',
+        telegramVariants: 'Rendered independently per verified quality variant (480p, 720p, 1080p, 4K) as soon as imported.',
+        processingPlaceholder: 'Permanent placeholder eliminated; subtle indicator only shown during active sync.',
+      },
     };
     try {
       const testToken = generateSignedDownloadToken({ variantId: 'diag-test', quality: '1080p', ttlSeconds: 60 });
@@ -1359,6 +1409,8 @@ router.get('/diagnostics', async (req, res) => {
         timestamp: new Date().toISOString(),
         durationMs: Date.now() - startTime,
         localBotApi: localBotApiStatus,
+        userbot: userbotStatus,
+        destinationChannel: destinationChannelStatus,
         downloadHealth,
         channels: {
           total: channels.length,

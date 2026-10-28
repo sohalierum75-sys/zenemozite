@@ -2419,6 +2419,12 @@ async function getTelegramDetailsForMovie(movieId, title) {
         id: v.id,
         file_id: v.telegramFileId,
         telegramFileId: v.telegramFileId,
+        destinationMessageId: v.telegramMessageId,
+        destinationChatId: v.sourceChannelId || config.telegram.chatId,
+        telegramMessageId: v.telegramMessageId,
+        telegram_link: v.telegramMessageId
+          ? `https://t.me/c/${String(config.telegram.chatId || v.sourceChannelId || '').replace(/^-100/, '').replace(/^-/, '')}/${v.telegramMessageId}`
+          : null,
         quality: v.quality,
         size: v.fileSizeFormatted || (v.fileSizeBytes ? `${(v.fileSizeBytes / (1024 ** 3)).toFixed(1)} GB` : 'Direct Stream'),
         fileName: v.fileName,
@@ -2459,6 +2465,12 @@ async function getTelegramDetailsForMovie(movieId, title) {
         id: v.id,
         file_id: v.telegramFileId,
         telegramFileId: v.telegramFileId,
+        destinationMessageId: v.telegramMessageId,
+        destinationChatId: v.sourceChannelId || config.telegram.chatId,
+        telegramMessageId: v.telegramMessageId,
+        telegram_link: v.telegramMessageId
+          ? `https://t.me/c/${String(config.telegram.chatId || v.sourceChannelId || '').replace(/^-100/, '').replace(/^-/, '')}/${v.telegramMessageId}`
+          : null,
         quality: v.quality,
         size: v.fileSizeFormatted || (v.fileSizeBytes ? `${(v.fileSizeBytes / (1024 ** 3)).toFixed(1)} GB` : 'Direct Stream'),
         fileName: v.fileName,

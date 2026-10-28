@@ -11,6 +11,8 @@ import {
   Subtitles,
   ShieldCheck,
   FileVideo,
+  ExternalLink,
+  Send,
 } from 'lucide-react';
 import { API_BASE_URL } from '../config/api';
 
@@ -315,27 +317,63 @@ const TelegramQualityDownloads = ({
                 </div>
               </div>
 
-              {/* Direct Download Button */}
-              <button
-                type="button"
-                onClick={() => handleDownload(file)}
-                disabled={isDownloading}
-                className={`w-full py-3.5 px-4 rounded-xl font-extrabold text-sm text-white shadow-md transition-all duration-300 flex items-center justify-center space-x-2 active:scale-95 disabled:opacity-75 cursor-pointer bg-gradient-to-r ${theme.buttonGrad}`}
-              >
-                {isDownloading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Connecting Secure Stream...</span>
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4 transition-transform group-hover:translate-y-0.5" />
-                    <span>
-                      {formatQualityButtonLabel(quality, size, isLk)}
-                    </span>
-                  </>
-                )}
-              </button>
+              {/* Delivery Actions: MODE B (Website Direct) & MODE A (Telegram Redirect) */}
+              <div className="space-y-2 mt-auto">
+                {/* MODE B: Authenticated Website Direct Download */}
+                <button
+                  type="button"
+                  onClick={() => handleDownload(file)}
+                  disabled={isDownloading}
+                  className={`w-full py-3.5 px-4 rounded-xl font-extrabold text-sm text-white shadow-md transition-all duration-300 flex items-center justify-center space-x-2 active:scale-95 disabled:opacity-75 cursor-pointer bg-gradient-to-r ${theme.buttonGrad}`}
+                >
+                  {isDownloading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Connecting Secure Stream...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4 transition-transform group-hover:translate-y-0.5" />
+                      <span>
+                        {formatQualityButtonLabel(quality, size, isLk)}
+                      </span>
+                    </>
+                  )}
+                </button>
+
+                {/* MODE A: Telegram Destination Message Redirect (Zero VPS Bandwidth & Storage) */}
+                {(() => {
+                  const msgId = file.destinationMessageId || file.message_id || file.telegramMessageId;
+                  const channel = file.destinationChatId || file.sourceChannelId;
+                  const username = file.channelUsername || file.username;
+                  let tgUrl = null;
+
+                  if (username && msgId) {
+                    tgUrl = `https://t.me/${String(username).replace(/^@/, '')}/${msgId}`;
+                  } else if (channel && msgId) {
+                    const cleanId = String(channel).replace(/^-100/, '').replace(/^-/, '');
+                    tgUrl = `https://t.me/c/${cleanId}/${msgId}`;
+                  } else if (file.telegram_link) {
+                    tgUrl = file.telegram_link;
+                  }
+
+                  if (!tgUrl) return null;
+
+                  return (
+                    <a
+                      href={tgUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full py-2 px-3 rounded-lg text-xs font-semibold text-[#8b94a6] hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
+                      title="Open destination post directly in Telegram (Zero VPS proxy bandwidth)"
+                    >
+                      <Send className="w-3.5 h-3.5 text-sky-400" />
+                      <span>{isLk ? 'ටෙලිග්‍රෑම් හරහා විවෘත කරන්න (t.me)' : 'Open in Telegram (t.me)'}</span>
+                      <ExternalLink className="w-3 h-3 opacity-60 ml-0.5" />
+                    </a>
+                  );
+                })()}
+              </div>
             </div>
           );
         })}
