@@ -32,6 +32,7 @@ model MediaCache {
   ytTrailerCode  String?
   torrents       String?  // JSON string array of torrent objects
   download_links String?  // JSON string array of DDL objects [{ provider, quality, url }]
+  telegram_files String?  // JSON string array of Telegram file objects [{ file_id, quality, size }]
   numberOfSeasons Int?    // For TV shows only
   lastUpdated    DateTime @default(now())
   createdAt      DateTime @default(now())
@@ -67,6 +68,7 @@ model Movie {
   lastError        String?      // human-readable reason for the last 'failed' status
   telegramFileIds  String?      // JSON array of Telegram file_ids for ALL parts of the
                                 // movie, in order — e.g. '["id_part1","id_part2"]'.
+  telegram_files   String?      // JSON array of Telegram files [{ file_id: "...", quality: "1080p", size: "1.5GB" }]
   download_links   String?      // JSON array of Direct Download Links [{ provider, quality, url }]
   lastDownloadedAt DateTime     @default(now()) // touched on every download request
   createdAt        DateTime     @default(now())

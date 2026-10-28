@@ -16,6 +16,7 @@ import { PassThrough } from 'stream';
 import prisma from '../prisma/client.js';
 import { config, formatBytes } from './config.js';
 import * as telegramStore from './telegramStore.js';
+import { parseTelegramFileMetadata } from './telegramParser.js';
 
 /**
  * Copy the byte range [start..end] of filePath into its own file (pure disk
@@ -194,14 +195,21 @@ export async function splitAndUpload(filePath, { movieId, title, fileName, mimeT
     }
   }
 
+  const tgMeta = parseTelegramFileMetadata({
+    file_id: fileIds[0] || movieId,
+    file_name: safeName,
+    caption: title,
+    fileSize: totalSize,
+  });
+
   await prisma.movie.update({
     where: { id: movieId },
     data: {
       status: 'ready',
-      // Ordered array of Telegram file_ids for ALL parts of this movie,
-      // e.g. '["id_part1","id_part2"]' — lets the API/frontend handle the
-      // multi-part download without re-querying every MovieChunk row.
+      // Ordered array of Telegram file_ids for ALL parts of this movie
       telegramFileIds: JSON.stringify(fileIds),
+      // Standardized telegram_files array of objects: [{ file_id, quality, size }]
+      telegram_files: JSON.stringify([tgMeta]),
     },
   });
 

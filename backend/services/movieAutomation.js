@@ -1,5 +1,6 @@
 import axios from 'axios';
 import prisma from '../prisma/client.js';
+import { parseTelegramFiles } from '../storage/telegramParser.js';
 
 // Configuration
 const TMDB_API_KEY = process.env.TMDB_API_KEY || '8a68f9cbe2f314d0cdab27cc8d58216b';
@@ -288,6 +289,9 @@ export async function saveMovieWithLinks(movieData, formattedLinks = [], rawTorr
   const meta = await resolveTMDBMetadata(movieData);
   const tmdbIdInt = meta.tmdbId ? parseInt(meta.tmdbId, 10) : null;
   const linksJson = JSON.stringify(formattedLinks);
+  const rawTg = movieData.telegram_files || movieData.telegramFiles;
+  const tgFiles = rawTg ? parseTelegramFiles(rawTg) : [];
+  const tgFilesJson = tgFiles.length > 0 ? JSON.stringify(tgFiles) : null;
 
   // 1. Upsert Movie record
   let savedMovie = null;
@@ -301,6 +305,7 @@ export async function saveMovieWithLinks(movieData, formattedLinks = [], rawTorr
         releaseDate: meta.releaseDate || undefined,
         voteAverage: meta.voteAverage || undefined,
         download_links: linksJson,
+        ...(tgFilesJson ? { telegram_files: tgFilesJson } : {}),
         status: 'ready'
       },
       create: {
@@ -311,6 +316,7 @@ export async function saveMovieWithLinks(movieData, formattedLinks = [], rawTorr
         releaseDate: meta.releaseDate,
         voteAverage: meta.voteAverage,
         download_links: linksJson,
+        telegram_files: tgFilesJson,
         status: 'ready'
       }
     });
@@ -325,6 +331,7 @@ export async function saveMovieWithLinks(movieData, formattedLinks = [], rawTorr
         where: { id: existing.id },
         data: {
           download_links: linksJson,
+          ...(tgFilesJson ? { telegram_files: tgFilesJson } : {}),
           status: 'ready'
         }
       });
@@ -337,6 +344,7 @@ export async function saveMovieWithLinks(movieData, formattedLinks = [], rawTorr
           releaseDate: meta.releaseDate,
           voteAverage: meta.voteAverage,
           download_links: linksJson,
+          telegram_files: tgFilesJson,
           status: 'ready'
         }
       });
@@ -380,6 +388,7 @@ export async function saveMovieWithLinks(movieData, formattedLinks = [], rawTorr
       update: {
         title: meta.title,
         download_links: linksJson,
+        ...(tgFilesJson ? { telegram_files: tgFilesJson } : {}),
         torrents: rawTorrents.length > 0 ? torrentsJson : undefined,
         lastUpdated: new Date()
       },
@@ -394,6 +403,7 @@ export async function saveMovieWithLinks(movieData, formattedLinks = [], rawTorr
         backdrop: meta.backdropPath,
         plot: meta.overview,
         download_links: linksJson,
+        telegram_files: tgFilesJson,
         torrents: torrentsJson,
         lastUpdated: new Date()
       }

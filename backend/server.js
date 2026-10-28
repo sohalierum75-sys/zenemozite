@@ -7,6 +7,7 @@ import hybridCacheRoutes, { downloadRouter, streamRouter } from './storage/route
 import { fetchAndCacheMovies, createTMDBListFetcher } from './listCache.js';
 import { startWorker } from './storage/worker.js';
 import adminRouter, { getDownloadLinksForMovie } from './adminRoutes.js';
+import { parseTelegramFiles } from './storage/telegramParser.js';
 import { startMovieCron } from './cron/movieSync.js';
 
 const app = express();
@@ -2364,6 +2365,58 @@ app.get('/api/tv', async (req, res) => {
   }
 });
 
+/**
+ * Helper to fetch and parse telegram files for a movie (from Movie or MediaCache)
+ */
+async function getTelegramFilesForMovie(movieId, title) {
+  try {
+    const idInt = parseInt(movieId, 10);
+    const movie = await prisma.movie.findFirst({
+      where: {
+        OR: [
+          { id: String(movieId) },
+          ...(Number.isInteger(idInt) ? [{ tmdbId: idInt }] : []),
+          ...(title ? [{ title: String(title) }] : [])
+        ]
+      },
+      include: { chunks: true }
+    });
+
+    if (movie?.telegram_files) {
+      const parsed = parseTelegramFiles(movie.telegram_files);
+      if (parsed.length > 0) return parsed;
+    }
+
+    const cached = await prisma.mediaCache.findFirst({
+      where: {
+        OR: [
+          { tmdbId: String(movieId) },
+          ...(title ? [{ title: String(title) }] : [])
+        ]
+      }
+    });
+
+    if (cached?.telegram_files) {
+      const parsed = parseTelegramFiles(cached.telegram_files);
+      if (parsed.length > 0) return parsed;
+    }
+
+    // Fallback if chunks exist but telegram_files hasn't been generated
+    if (movie?.chunks && movie.chunks.length > 0) {
+      return movie.chunks.map((c, i) => ({
+        file_id: c.telegramFileId || c.id,
+        quality: movie.fileName?.includes('720p') ? '720p' : (movie.fileName?.includes('480p') ? '480p' : '1080p'),
+        size: c.chunkSize ? `${(c.chunkSize / (1024 * 1024 * 1024)).toFixed(1)}GB` : 'Unknown'
+      }));
+    }
+
+    return [];
+  } catch (err) {
+    console.warn('[SERVER] Error fetching telegram files:', err.message);
+    return [];
+  }
+}
+
 // Get single movie by ID (TMDB) with Prisma Database Caching
 app.get('/api/movies/:id', async (req, res) => {
   const movieId = req.params.id;
@@ -2385,12 +2438,18 @@ app.get('/api/movies/:id', async (req, res) => {
           ? memCached.data.download_links 
           : (Array.isArray(memCached.data.downloadLinks) ? memCached.data.downloadLinks : []));
 
+    let telegramFiles = await getTelegramFilesForMovie(movieId, memCached.data?.title);
+    if (telegramFiles.length === 0 && memCached.data?.telegram_files) {
+      telegramFiles = parseTelegramFiles(memCached.data.telegram_files);
+    }
+
     return res.json({
       ...memCached,
       data: {
         ...memCached.data,
         download_links: finalLinks,
-        downloadLinks: finalLinks
+        downloadLinks: finalLinks,
+        telegram_files: telegramFiles
       }
     });
   }
@@ -2461,6 +2520,11 @@ app.get('/api/movies/:id', async (req, res) => {
       if (ageInHours < 24) {
         console.log(`[PRISMA] Database cache HIT for movie ${movieId} (${ageInHours.toFixed(1)}h old) - ${ddlLinks.length} links`);
         
+        let telegramFiles = parseTelegramFiles(dbCached.telegram_files);
+        if (telegramFiles.length === 0) {
+          telegramFiles = await getTelegramFilesForMovie(movieId, dbCached.title);
+        }
+
         const responseData = {
           id: parseInt(movieId),
           imdb_id: dbCached.imdbId,
@@ -2476,6 +2540,7 @@ app.get('/api/movies/:id', async (req, res) => {
           torrents: dbCached.torrents ? JSON.parse(dbCached.torrents) : [],
           download_links: ddlLinks,
           downloadLinks: ddlLinks,
+          telegram_files: telegramFiles,
           is_tv: dbCached.mediaType === 'tv',
           type: dbCached.mediaType
         };
@@ -2495,6 +2560,12 @@ app.get('/api/movies/:id', async (req, res) => {
       }
     } else if (movieWithLinks && (ddlLinks.length > 0 || movieWithLinks.posterPath)) {
       console.log(`[PRISMA] Movie table HIT with downloadLinks for movie ${movieId} (${ddlLinks.length} links)`);
+      
+      let telegramFiles = parseTelegramFiles(movieWithLinks.telegram_files);
+      if (telegramFiles.length === 0) {
+        telegramFiles = await getTelegramFilesForMovie(movieId, movieWithLinks.title);
+      }
+
       const responseData = {
         id: movieWithLinks.tmdbId || (Number.isInteger(idInt) ? idInt : movieId),
         title: movieWithLinks.title,
@@ -2509,6 +2580,7 @@ app.get('/api/movies/:id', async (req, res) => {
         torrents: [],
         download_links: ddlLinks,
         downloadLinks: ddlLinks,
+        telegram_files: telegramFiles,
         is_tv: false,
         type: 'movie'
       };
@@ -2712,6 +2784,11 @@ app.get('/api/movies/:id', async (req, res) => {
 
     console.log(`[API] DDL Links merged for Fresh Fetch movie ${movieId}: ${ddlLinks.length} link(s) found`);
 
+    let telegramFiles = parseTelegramFiles(dbMovie?.telegram_files);
+    if (telegramFiles.length === 0) {
+      telegramFiles = await getTelegramFilesForMovie(movieId, title);
+    }
+
     const responseData = {
       id: parseInt(movieId),
       imdb_id: imdbId,
@@ -2727,6 +2804,7 @@ app.get('/api/movies/:id', async (req, res) => {
       torrents: torrents,
       download_links: ddlLinks,
       downloadLinks: ddlLinks,
+      telegram_files: telegramFiles,
       is_tv: isTVShow,
       type: isTVShow ? 'tv' : 'movie'
     };
@@ -2754,6 +2832,7 @@ app.get('/api/movies/:id', async (req, res) => {
           ytTrailerCode: trailerCode || null,
           torrents: JSON.stringify(torrents),
           download_links: ddlLinks.length > 0 ? JSON.stringify(ddlLinks) : undefined,
+          telegram_files: telegramFiles.length > 0 ? JSON.stringify(telegramFiles) : undefined,
           lastUpdated: new Date()
         },
         create: {
@@ -2770,7 +2849,8 @@ app.get('/api/movies/:id', async (req, res) => {
           genres: JSON.stringify(responseData.genres),
           ytTrailerCode: trailerCode || null,
           torrents: JSON.stringify(torrents),
-          download_links: ddlLinks.length > 0 ? JSON.stringify(ddlLinks) : null
+          download_links: ddlLinks.length > 0 ? JSON.stringify(ddlLinks) : null,
+          telegram_files: telegramFiles.length > 0 ? JSON.stringify(telegramFiles) : null
         }
       });
       

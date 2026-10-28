@@ -23,6 +23,7 @@ import bigInt from 'big-integer';
 import axios from 'axios';
 import { config, formatBytes } from './config.js';
 import { getFilePath, getFileInfo, resolveLocalDiskPath } from './telegramStore.js';
+import { parseTelegramFileMetadata, parseTelegramFiles } from './telegramParser.js';
 
 let clientInstance = null;
 let clientInitPromise = null;
@@ -122,13 +123,22 @@ export async function resolveTelegramMedia({ messageId, fileId, title } = {}) {
               const fileNameAttr = doc.attributes.find((a) => a.fileName || a.className === 'DocumentAttributeFilename');
               if (fileNameAttr?.fileName) docName = fileNameAttr.fileName;
             }
-            console.log(`[USERBOT] Resolved MTProto document "${docName}" (${doc.size} bytes) from msg ${messageId}`);
+            const caption = msg.message || '';
+            const meta = parseTelegramFileMetadata({
+              file_id: String(msg.id),
+              file_name: docName,
+              caption,
+              fileSize: Number(doc.size || 0),
+            });
+            console.log(`[USERBOT] Resolved MTProto document "${docName}" (${doc.size} bytes, quality: ${meta.quality}, size: ${meta.size}) from msg ${messageId}`);
             return {
               document: doc,
               fileSize: Number(doc.size || 0),
               mimeType: doc.mimeType || 'video/mp4',
               fileName: docName,
               messageId: msg.id,
+              quality: meta.quality,
+              size: meta.size,
             };
           }
         }
@@ -150,13 +160,22 @@ export async function resolveTelegramMedia({ messageId, fileId, title } = {}) {
               const fileNameAttr = doc.attributes.find((a) => a.fileName || a.className === 'DocumentAttributeFilename');
               if (fileNameAttr?.fileName) docName = fileNameAttr.fileName;
             }
-            console.log(`[USERBOT] Found document "${docName}" via channel search (msg ${msg.id})`);
+            const caption = msg.message || '';
+            const meta = parseTelegramFileMetadata({
+              file_id: String(msg.id),
+              file_name: docName,
+              caption,
+              fileSize: Number(doc.size || 0),
+            });
+            console.log(`[USERBOT] Found document "${docName}" via channel search (msg ${msg.id}, quality: ${meta.quality}, size: ${meta.size})`);
             return {
               document: doc,
               fileSize: Number(doc.size || 0),
               mimeType: doc.mimeType || 'video/mp4',
               fileName: docName,
               messageId: msg.id,
+              quality: meta.quality,
+              size: meta.size,
             };
           }
         }
@@ -171,13 +190,20 @@ export async function resolveTelegramMedia({ messageId, fileId, title } = {}) {
     try {
       console.log(`[USERBOT] Resolving file_id "${fileId}" via Telegram Bot API...`);
       const info = await getFileInfo(fileId);
-      console.log(`[USERBOT] Resolved Bot API file_path: ${info.filePath} (${info.fileSize ? formatBytes(info.fileSize) : 'unknown size'})`);
+      const meta = parseTelegramFileMetadata({
+        file_id: String(fileId),
+        file_name: info.filePath ? path.basename(info.filePath) : `${title || 'download'}.mp4`,
+        fileSize: info.fileSize,
+      });
+      console.log(`[USERBOT] Resolved Bot API file_path: ${info.filePath} (${info.fileSize ? formatBytes(info.fileSize) : 'unknown size'}, quality: ${meta.quality})`);
       return {
         document: null,
         localFilePath: info.filePath,
         fileSize: info.fileSize,
         mimeType: 'video/mp4',
         fileName: `${title || 'download'}.mp4`,
+        quality: meta.quality,
+        size: meta.size,
       };
     } catch (err) {
       console.warn(`[USERBOT] Local Bot API getFileInfo failed for ${fileId}:`, err.message);
@@ -185,6 +211,59 @@ export async function resolveTelegramMedia({ messageId, fileId, title } = {}) {
   }
 
   return null;
+}
+
+/**
+ * Fetch and parse all Telegram files for a movie title from the Telegram channel.
+ * Parses file_name and caption with Regex to extract quality (1080p, 720p, 480p) and file size.
+ *
+ * @param {string} title - Movie title to search in Telegram channel
+ * @returns {Promise<Array<{ file_id: string, quality: string, size: string }>>}
+ */
+export async function fetchTelegramFilesForMovie(title) {
+  if (!title) return [];
+  const client = await getUserbotClient();
+  const chatId = config.telegram.chatId;
+
+  if (!client || !chatId || !config.telegram.stringSession) {
+    return [];
+  }
+
+  try {
+    const cleanTitle = title.replace(/[^\w\s]/g, ' ').trim().slice(0, 30);
+    console.log(`[USERBOT] Scanning Telegram channel files for "${cleanTitle}"...`);
+    const foundFiles = [];
+
+    for await (const msg of client.iterMessages(chatId, { search: cleanTitle, limit: 30 })) {
+      if (msg.media && (msg.media.document || msg.media)) {
+        const doc = msg.media.document || msg.media;
+        let docName = `${title}.mp4`;
+        if (Array.isArray(doc.attributes)) {
+          const fileNameAttr = doc.attributes.find((a) => a.fileName || a.className === 'DocumentAttributeFilename');
+          if (fileNameAttr?.fileName) docName = fileNameAttr.fileName;
+        }
+
+        const caption = msg.message || '';
+        const parsed = parseTelegramFileMetadata({
+          file_id: String(msg.id),
+          file_name: docName,
+          caption,
+          fileSize: Number(doc.size || 0),
+        });
+
+        if (parsed && parsed.file_id) {
+          foundFiles.push(parsed);
+        }
+      }
+    }
+
+    const normalized = parseTelegramFiles(foundFiles);
+    console.log(`[USERBOT] Found ${normalized.length} Telegram file(s) for "${title}":`, normalized);
+    return normalized;
+  } catch (err) {
+    console.warn(`[USERBOT] Error fetching Telegram files for "${title}":`, err.message);
+    return [];
+  }
 }
 
 /**

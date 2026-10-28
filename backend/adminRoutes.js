@@ -1,5 +1,6 @@
 import express from 'express';
 import prisma from './prisma/client.js';
+import { parseTelegramFiles, parseTelegramFileMetadata } from './storage/telegramParser.js';
 
 const router = express.Router();
 
@@ -140,7 +141,8 @@ router.get('/movies', async (req, res) => {
         posterPath: m.posterPath,
         releaseDate: m.releaseDate,
         createdAt: m.createdAt,
-        download_links: links
+        download_links: links,
+        telegram_files: parseTelegramFiles(m.telegram_files)
       };
     });
 
@@ -195,7 +197,8 @@ router.get('/movies/:id', async (req, res) => {
             title: cached.title,
             year: cached.year,
             poster: cached.poster,
-            download_links: links
+            download_links: links,
+            telegram_files: parseTelegramFiles(cached.telegram_files)
           }
         });
       }
@@ -206,7 +209,8 @@ router.get('/movies/:id', async (req, res) => {
       success: true,
       data: {
         ...movie,
-        download_links: links
+        download_links: links,
+        telegram_files: parseTelegramFiles(movie.telegram_files)
       }
     });
   } catch (err) {
@@ -217,7 +221,7 @@ router.get('/movies/:id', async (req, res) => {
 
 /**
  * POST /api/admin/movies
- * Create or save a movie with direct download links
+ * Create or save a movie with direct download links and telegram files
  */
 router.post('/movies', async (req, res) => {
   try {
@@ -227,7 +231,8 @@ router.post('/movies', async (req, res) => {
       posterPath,
       backdropPath,
       releaseDate,
-      download_links = []
+      download_links = [],
+      telegram_files = []
     } = req.body;
 
     if (!title) {
@@ -236,6 +241,8 @@ router.post('/movies', async (req, res) => {
 
     const tmdbIdInt = tmdbId ? parseInt(tmdbId, 10) : null;
     const linksArray = Array.isArray(download_links) ? download_links : [];
+    const tgFiles = parseTelegramFiles(telegram_files);
+    const tgFilesJson = tgFiles.length > 0 ? JSON.stringify(tgFiles) : null;
 
     // Upsert movie record
     let movie = null;
@@ -247,7 +254,8 @@ router.post('/movies', async (req, res) => {
           posterPath: posterPath || undefined,
           backdropPath: backdropPath || undefined,
           releaseDate: releaseDate || undefined,
-          download_links: JSON.stringify(linksArray)
+          download_links: JSON.stringify(linksArray),
+          ...(tgFilesJson ? { telegram_files: tgFilesJson } : {})
         },
         create: {
           title,
@@ -256,6 +264,7 @@ router.post('/movies', async (req, res) => {
           backdropPath: backdropPath || null,
           releaseDate: releaseDate || null,
           download_links: JSON.stringify(linksArray),
+          telegram_files: tgFilesJson,
           status: 'ready'
         }
       });
@@ -267,6 +276,7 @@ router.post('/movies', async (req, res) => {
           backdropPath: backdropPath || null,
           releaseDate: releaseDate || null,
           download_links: JSON.stringify(linksArray),
+          telegram_files: tgFilesJson,
           status: 'ready'
         }
       });
@@ -294,7 +304,10 @@ router.post('/movies', async (req, res) => {
     if (tmdbIdInt) {
       await prisma.mediaCache.updateMany({
         where: { tmdbId: String(tmdbIdInt) },
-        data: { download_links: JSON.stringify(linksArray) }
+        data: {
+          download_links: JSON.stringify(linksArray),
+          ...(tgFilesJson ? { telegram_files: tgFilesJson } : {})
+        }
       }).catch(() => {});
     }
 
@@ -305,7 +318,8 @@ router.post('/movies', async (req, res) => {
       message: 'Movie and download links saved successfully',
       data: {
         ...movie,
-        download_links: savedLinks
+        download_links: savedLinks,
+        telegram_files: tgFiles
       }
     });
   } catch (err) {
@@ -316,7 +330,7 @@ router.post('/movies', async (req, res) => {
 
 /**
  * PUT /api/admin/movies/:id
- * Update movie and replace/sync direct download links
+ * Update movie and replace/sync direct download links and telegram files
  */
 router.put('/movies/:id', async (req, res) => {
   try {
@@ -327,7 +341,8 @@ router.put('/movies/:id', async (req, res) => {
       posterPath,
       backdropPath,
       releaseDate,
-      download_links
+      download_links,
+      telegram_files
     } = req.body;
 
     const idNum = parseInt(id, 10);
@@ -342,6 +357,8 @@ router.put('/movies/:id', async (req, res) => {
 
     let updatedMovie = null;
     const linksArray = Array.isArray(download_links) ? download_links : null;
+    const hasTgFiles = telegram_files !== undefined;
+    const tgFiles = hasTgFiles ? parseTelegramFiles(telegram_files) : null;
 
     if (existingMovie) {
       updatedMovie = await prisma.movie.update({
@@ -351,7 +368,8 @@ router.put('/movies/:id', async (req, res) => {
           posterPath: posterPath !== undefined ? posterPath : existingMovie.posterPath,
           backdropPath: backdropPath !== undefined ? backdropPath : existingMovie.backdropPath,
           releaseDate: releaseDate !== undefined ? releaseDate : existingMovie.releaseDate,
-          download_links: linksArray !== null ? JSON.stringify(linksArray) : existingMovie.download_links
+          download_links: linksArray !== null ? JSON.stringify(linksArray) : existingMovie.download_links,
+          telegram_files: hasTgFiles ? JSON.stringify(tgFiles) : existingMovie.telegram_files
         }
       });
 
@@ -423,11 +441,16 @@ router.put('/movies/:id', async (req, res) => {
 
     // Also update MediaCache if tmdbId is present
     const tmdbIdRef = updatedMovie.tmdbId || (Number.isInteger(idNum) ? idNum : null);
-    if (tmdbIdRef && linksArray !== null) {
-      await prisma.mediaCache.updateMany({
-        where: { tmdbId: String(tmdbIdRef) },
-        data: { download_links: JSON.stringify(linksArray) }
-      }).catch(() => {});
+    if (tmdbIdRef) {
+      const cacheUpdates = {};
+      if (linksArray !== null) cacheUpdates.download_links = JSON.stringify(linksArray);
+      if (hasTgFiles) cacheUpdates.telegram_files = JSON.stringify(tgFiles);
+      if (Object.keys(cacheUpdates).length > 0) {
+        await prisma.mediaCache.updateMany({
+          where: { tmdbId: String(tmdbIdRef) },
+          data: cacheUpdates
+        }).catch(() => {});
+      }
     }
 
     const currentLinks = await getDownloadLinksForMovie(updatedMovie.id);
@@ -437,11 +460,95 @@ router.put('/movies/:id', async (req, res) => {
       message: 'Movie updated successfully',
       data: {
         ...updatedMovie,
-        download_links: currentLinks
+        download_links: currentLinks,
+        telegram_files: parseTelegramFiles(updatedMovie.telegram_files)
       }
     });
   } catch (err) {
     console.error('[ADMIN] Error updating movie:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/admin/movies/:id/telegram-files
+ * Save or append telegram files for a movie with automatic metadata parsing
+ */
+router.post('/movies/:id/telegram-files', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { telegram_files = [], file_id, file_name, caption, fileSize, quality, size } = req.body;
+
+    const idNum = parseInt(id, 10);
+    const movie = await prisma.movie.findFirst({
+      where: {
+        OR: [
+          { id },
+          ...(Number.isInteger(idNum) ? [{ tmdbId: idNum }] : [])
+        ]
+      }
+    });
+
+    if (!movie) {
+      return res.status(404).json({ success: false, message: 'Movie not found' });
+    }
+
+    let filesToAdd = Array.isArray(telegram_files) ? [...telegram_files] : [];
+    if (file_id) {
+      filesToAdd.push({ file_id, file_name, caption, fileSize, quality, size });
+    }
+
+    // Existing files
+    const existingFiles = parseTelegramFiles(movie.telegram_files);
+    const combined = [...existingFiles, ...filesToAdd];
+    const normalized = parseTelegramFiles(combined);
+
+    const updated = await prisma.movie.update({
+      where: { id: movie.id },
+      data: { telegram_files: JSON.stringify(normalized) }
+    });
+
+    if (movie.tmdbId) {
+      await prisma.mediaCache.updateMany({
+        where: { tmdbId: String(movie.tmdbId) },
+        data: { telegram_files: JSON.stringify(normalized) }
+      }).catch(() => {});
+    }
+
+    res.json({
+      success: true,
+      message: 'Telegram files updated successfully',
+      data: {
+        movieId: updated.id,
+        telegram_files: normalized
+      }
+    });
+  } catch (err) {
+    console.error('[ADMIN] Error saving telegram files:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/admin/telegram/parse-metadata (and alias /api/telegram/parse-metadata)
+ * Standalone utility endpoint to parse file_name or message caption using Regex
+ */
+router.post(['/telegram/parse-metadata', '/parse-telegram-metadata'], async (req, res) => {
+  try {
+    const { file_name, caption, text, fileSize, size, file_id } = req.body;
+    const parsed = parseTelegramFileMetadata({
+      file_name,
+      caption: caption || text,
+      fileSize,
+      size,
+      file_id: file_id || 'preview_id'
+    });
+
+    res.json({
+      success: true,
+      data: parsed
+    });
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });

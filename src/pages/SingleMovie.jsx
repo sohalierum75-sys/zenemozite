@@ -11,6 +11,43 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000
 const DEFAULT_POSTER = 'https://via.placeholder.com/400x600/1a1d29/8b94a6?text=No+Poster';
 const DEFAULT_BACKDROP = 'https://via.placeholder.com/1920x1080/0f1115/8b94a6?text=No+Image';
 
+/**
+ * Styling helper for quality badges and buttons
+ */
+const getQualityStyle = (quality = '') => {
+  const q = String(quality).toLowerCase();
+  if (q.includes('4k') || q.includes('2160')) {
+    return {
+      gradient: 'from-fuchsia-600 to-pink-600 hover:from-fuchsia-500 hover:to-pink-500',
+      badge: 'bg-pink-500/20 text-pink-300 border-pink-500/30',
+      shadow: 'hover:shadow-[0_0_25px_rgba(236,72,153,0.45)]',
+      label: '4K Ultra HD',
+    };
+  }
+  if (q.includes('1080')) {
+    return {
+      gradient: 'from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:via-purple-500 hover:to-pink-500',
+      badge: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30',
+      shadow: 'hover:shadow-[0_0_25px_rgba(99,102,241,0.45)]',
+      label: '1080p Full HD',
+    };
+  }
+  if (q.includes('720')) {
+    return {
+      gradient: 'from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500',
+      badge: 'bg-sky-500/20 text-sky-300 border-sky-500/30',
+      shadow: 'hover:shadow-[0_0_25px_rgba(14,165,233,0.45)]',
+      label: '720p HD',
+    };
+  }
+  return {
+    gradient: 'from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500',
+    badge: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+    shadow: 'hover:shadow-[0_0_25px_rgba(245,158,11,0.45)]',
+    label: '480p SD',
+  };
+};
+
 const SingleMovie = () => {
   const { id } = useParams();
   const { isLk } = useLocale();
@@ -18,6 +55,7 @@ const SingleMovie = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showTrailer, setShowTrailer] = useState(false);
+  const [downloadingFileId, setDownloadingFileId] = useState(null);
 
   useEffect(() => {
     if (id) {
@@ -132,6 +170,52 @@ const SingleMovie = () => {
   // 1. Add Console Log to inspect state
   console.log("Movie Data State:", movie);
 
+  // Extract Telegram files array safely
+  const candidateTgList = [
+    movie?.telegram_files,
+    movie?.telegramFiles,
+    movie?.data?.telegram_files,
+    movie?.data?.telegramFiles
+  ];
+  let rawTgFiles = candidateTgList.find(c => Array.isArray(c) && c.length > 0);
+  if (!rawTgFiles) {
+    for (const c of candidateTgList) {
+      if (typeof c === 'string' && c.trim().length > 2 && c.trim() !== '[]') {
+        try {
+          const parsed = JSON.parse(c);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            rawTgFiles = parsed;
+            break;
+          }
+        } catch { }
+      }
+    }
+  }
+
+  const telegramFiles = Array.isArray(rawTgFiles) ? rawTgFiles : [];
+  const hasTelegramFiles = telegramFiles.length > 0;
+
+  // Handler for direct browser download from /api/download/:file_id
+  const handleTelegramDownload = (file) => {
+    if (!file?.file_id) return;
+    const fileId = file.file_id;
+    setDownloadingFileId(fileId);
+
+    const downloadUrl = `${API_BASE_URL}/download/${encodeURIComponent(fileId)}?title=${encodeURIComponent(movie?.title || 'movie')}`;
+    console.log(`[TELEGRAM_DOWNLOAD] Triggering download for file ${fileId} (${file.quality}):`, downloadUrl);
+
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.setAttribute('download', `${(movie?.title || 'movie').replace(/[^\w.\- ]/g, '_')}_${file.quality || 'video'}.mp4`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    setTimeout(() => {
+      setDownloadingFileId(null);
+    }, 2500);
+  };
+
   // 1. Extract the Links Safely: Create a variable before the return statement that checks all possible paths to the links array
   const candidateList = [
     movie?.download_links,
@@ -171,7 +255,7 @@ const SingleMovie = () => {
     Array.isArray(movie?.torrents || movie?.data?.torrents) &&
     (movie?.torrents || movie?.data?.torrents).length > 0;
   const hasDirectLinks = directLinks.length > 0;
-  const hasDownloadOptions = hasTorrents || hasDirectLinks;
+  const hasDownloadOptions = hasTelegramFiles || hasDirectLinks || hasTorrents;
 
   if (loading) {
     return (
@@ -521,79 +605,98 @@ const SingleMovie = () => {
                 </div>
               )}
 
+              {/* Dynamic Telegram Quality Download Buttons (1080p, 720p, 480p) */}
+              {hasTelegramFiles ? (
+                <div className="glass-card rounded-2xl p-6 mb-6 border border-white/10 bg-gradient-to-br from-purple-900/20 via-black/40 to-black/60 shadow-2xl relative z-10">
+                  <div className="flex items-center justify-between flex-wrap gap-3 pb-4 mb-5 border-b border-white/10">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2.5 rounded-xl bg-gradient-to-tr from-[#7928ca] to-[#ff0080] text-white shadow-lg shadow-purple-500/30">
+                        <Download className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-extrabold text-white tracking-tight flex items-center gap-2">
+                          <span>Telegram Direct Downloads</span>
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">
+                            Zero-RAM CDN
+                          </span>
+                        </h3>
+                        <p className="text-xs text-[#8b94a6] mt-0.5">
+                          High-speed direct browser downloads via Telegram streaming
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-xs font-semibold px-3 py-1 rounded-full bg-white/10 text-white/90 border border-white/15">
+                      {telegramFiles.length} {telegramFiles.length === 1 ? 'Quality' : 'Qualities'} Available
+                    </span>
+                  </div>
+
+                  {/* Dynamically Rendered Buttons for each quality */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {telegramFiles.map((file, idx) => {
+                      const quality = file.quality || '1080p';
+                      const size = file.size || 'Unknown';
+                      const style = getQualityStyle(quality);
+                      const isDownloading = downloadingFileId === file.file_id;
+                      const downloadUrl = `${API_BASE_URL}/download/${encodeURIComponent(file.file_id)}?title=${encodeURIComponent(movie?.title || 'movie')}`;
+
+                      return (
+                        <div
+                          key={file.file_id || `tg-${idx}`}
+                          className="flex flex-col rounded-xl border border-white/10 bg-black/40 backdrop-blur-md p-4 transition-all duration-300 hover:border-white/20 hover:-translate-y-1 hover:shadow-xl group"
+                        >
+                          <div className="flex items-center justify-between mb-3">
+                            <span className={`text-xs font-bold px-2.5 py-1 rounded-lg border ${style.badge}`}>
+                              {style.label}
+                            </span>
+                            {size && size !== 'Unknown' && (
+                              <span className="text-xs font-medium text-[#8b94a6] bg-white/5 px-2 py-0.5 rounded">
+                                {size}
+                              </span>
+                            )}
+                          </div>
+
+                          <p className="text-xs text-[#8b94a6] mb-4 flex-1">
+                            Direct high-speed browser download via Telegram stream
+                          </p>
+
+                          <a
+                            href={downloadUrl}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              handleTelegramDownload(file);
+                            }}
+                            className={`w-full font-bold py-3 px-4 rounded-xl transition-all duration-300 flex items-center justify-center space-x-2 text-white shadow-md active:scale-95 bg-gradient-to-r ${style.gradient} ${style.shadow} cursor-pointer`}
+                            title={`Download ${quality} (${size})`}
+                          >
+                            {isDownloading ? (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                <span className="text-sm">Connecting Download...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Download className="w-4 h-4 transition-transform group-hover:translate-y-0.5" />
+                                <span className="text-sm font-semibold">
+                                  {isLk ? `${quality} බාගත කරන්න` : `Download ${quality}`}
+                                </span>
+                              </>
+                            )}
+                          </a>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : hasDirectLinks ? null : (
+                <div className="glass-card rounded-xl p-8 text-center mb-6">
+                  <AlertCircle className="w-16 h-16 text-[#8b94a6] mx-auto mb-4" />
+                  <h4 className="text-xl font-bold text-white mb-2">Telegram downloads being processed</h4>
+                  <p className="text-[#8b94a6] text-sm">Download links in 1080p, 720p, and 480p will appear once synced.</p>
+                </div>
+              )}
+
               {hasDownloadOptions ? (
                 <div className="relative z-10">
-                  {/* Warning Message (only when torrents are present) */}
-                  {hasTorrents && (
-                    <div className="bg-[var(--accent)]/10 border-l-4 border-[var(--accent)] rounded-lg p-4 mb-6 transition-accent">
-                      <p className="text-[var(--accent)] text-sm font-medium flex items-start space-x-2 transition-accent">
-                        <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                        <span>
-                          Torrent download options require a torrent client or webtor.io web stream.
-                        </span>
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Download Buttons - 3 Button System Per Quality */}
-                  {hasTorrents && (
-                    <div className="space-y-4 relative z-10">
-                      {movie?.torrents?.map((torrent, index) => {
-                        if (!torrent || !torrent.url) return null;
-
-                        return (
-                          <div key={`torrent-${index}-${torrent.quality || index}`} className="glass-card rounded-xl p-4 relative z-10 focus-within:z-50 hover:z-20">
-                            {/* Quality Header with Provider Badge */}
-                            <div className="mb-3">
-                              <div className="flex items-center justify-between flex-wrap gap-2">
-                                <h4 className="text-white font-bold text-lg">
-                                  Download Link {index + 1}: {torrent.quality || 'Unknown Quality'}
-                                  {torrent.size && (
-                                    <span className="text-[#8b94a6] text-sm font-normal ml-2">
-                                      ({torrent.size})
-                                    </span>
-                                  )}
-                                </h4>
-                                {torrent.provider && (
-                                  <span className="bg-[var(--accent)]/20 border border-[var(--accent)]/30 text-[var(--accent)] px-3 py-1 rounded-full text-xs font-bold">
-                                    {torrent.provider}
-                                  </span>
-                                )}
-                              </div>
-                              {torrent.seeders !== undefined && (
-                                <p className="text-[#8b94a6] text-xs mt-1">
-                                  Seeders: {torrent.seeders} | Leechers: {torrent.leechers || 0}
-                                </p>
-                              )}
-                            </div>
-
-                            {/* Download & Direct Stream buttons:
-                              1. DownloadButton: opens styled dropdown with DDLs + WebTorrent option.
-                              2. DirectStreamButton: direct Telegram MTProto Userbot streaming & direct download. */}
-                            <div className="mt-4 flex flex-col sm:flex-row items-stretch gap-3 relative z-10 focus-within:z-50">
-                              <DownloadButton
-                                movieId={movie?.title}
-                                title={movie?.title}
-                                magnetLink={torrent.url}
-                                downloadLinks={directLinks}
-                                movie={movie}
-                                label={isLk ? 'Download | බාගත කරන්න' : 'Download'}
-                                className="w-full bg-[#ff9900] text-[#0f1115] hover:shadow-[0_0_15px_rgba(255,153,0,0.4)] hover:-translate-y-1"
-                              />
-                              <DirectStreamButton
-                                movieId={movie?.title}
-                                title={movie?.title}
-                                magnetLink={torrent.url}
-                                label={isLk ? 'Direct Download | සෘජු බාගත කිරීම' : 'Direct Download'}
-                                className="w-full sm:w-auto flex-1"
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
                   {/* Automated Report & Fix Broken Link */}
                   <ReportBrokenLink
                     title={movie?.title}
@@ -608,8 +711,7 @@ const SingleMovie = () => {
                   <div className="mt-6 glass-card rounded-xl p-4">
                     <p className="text-[#8b94a6] text-sm leading-relaxed">
                       <strong className="text-white">Download Options:</strong><br />
-                      • Click <strong className="text-[#ff9900]">Download</strong> to open the download options dropdown (Cloud DDL + WebTorrent).<br />
-                      • Click <strong className="text-[#ff0080]">Direct Download</strong> to download the movie file directly to your device via high-speed Telegram streaming (Zero-RAM).
+                      • Click any quality button (<strong className="text-[#6366f1]">1080p</strong>, <strong className="text-[#0ea5e9]">720p</strong>, or <strong className="text-[#f59e0b]">480p</strong>) to download the movie directly to your device via high-speed Telegram streaming (Zero-RAM).
                     </p>
                   </div>
                 </div>

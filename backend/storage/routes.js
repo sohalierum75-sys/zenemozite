@@ -168,6 +168,43 @@ export async function handleDownload(req, res) {
       }
     }
 
+    // 3.5 Check if file_id exists in any Movie.telegram_files
+    try {
+      const movieWithTgFile = await prisma.movie.findFirst({
+        where: {
+          telegram_files: {
+            contains: file_id
+          }
+        }
+      });
+
+      if (movieWithTgFile?.telegram_files) {
+        const tgList = JSON.parse(movieWithTgFile.telegram_files);
+        const matched = Array.isArray(tgList) && tgList.find(f => f.file_id === file_id);
+        if (matched) {
+          const directMedia = await resolveTelegramMedia({
+            fileId: file_id,
+            messageId: /^\d+$/.test(file_id) ? parseInt(file_id, 10) : undefined,
+            title: movieWithTgFile.title
+          });
+          if (directMedia && (directMedia.document || directMedia.localFilePath)) {
+            const outName = `${movieWithTgFile.title} - ${matched.quality || '1080p'}.mp4`.replace(/[^\w.\- ]/g, '_');
+            return await streamMediaToResponse({
+              req,
+              res,
+              document: directMedia.document,
+              localFilePath: directMedia.localFilePath,
+              fileSize: directMedia.fileSize,
+              mimeType: 'application/octet-stream',
+              fileName: outName,
+            });
+          }
+        }
+      }
+    } catch (tgLookupErr) {
+      console.warn(`[PASS_THROUGH_DOWNLOAD] telegram_files lookup check failed for "${file_id}":`, tgLookupErr.message);
+    }
+
     // 4. Check if file_id is a Movie ID or Movie Title in the cache database
     const entry = await peekCacheEntry(file_id);
     const activeMagnet = magnetLink || entry?.movie?.magnetLink || null;
