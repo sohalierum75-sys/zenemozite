@@ -45,12 +45,6 @@ const Footer = () => {
                 </Link>
               </li>
               <li>
-                <Link to="/admin" className="text-[#8b94a6] hover:text-[var(--accent)] transition-accent text-sm font-semibold flex items-center">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 inline-block" />
-                  Telegram Automation
-                </Link>
-              </li>
-              <li>
                 <a href="#about" className="text-[#8b94a6] hover:text-[var(--accent)] transition-accent text-sm">
                   About Us
                 </a>

@@ -28,6 +28,9 @@ import {
 } from 'lucide-react';
 import { API_BASE_URL } from '../config/api';
 
+// Presentation only: preserve the automation hooks and handlers below.
+const showTelegramAutomationUI = false;
+
 const AdminDashboard = () => {
   const [activeTab, setActiveTab] = useState('channels');
   const [loading, setLoading] = useState(true);
@@ -318,6 +321,11 @@ const AdminDashboard = () => {
 
   return (
     <div className="min-h-screen bg-[#0a0c10] text-[#e1e7ef] pt-24 pb-16 px-4 sm:px-6 lg:px-8">
+      {!showTelegramAutomationUI && (
+        <h1 className="max-w-7xl mx-auto text-3xl sm:text-4xl font-black text-white tracking-tight">Admin Dashboard</h1>
+      )}
+      {showTelegramAutomationUI && (
+        <>
       <div className="max-w-7xl mx-auto space-y-8">
         {/* Top Header */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-6 border-b border-white/10">
@@ -1312,6 +1320,8 @@ const AdminDashboard = () => {
             </form>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );
